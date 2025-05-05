@@ -1,4 +1,4 @@
-//Nettester µÄ¹¦ÄÜÎÄ¼ş
+//Nettester çš„åŠŸèƒ½æ–‡ä»¶
 #include <iostream>
 #include <conio.h>
 #include "winsock.h"
@@ -7,412 +7,621 @@
 #include "function.h"
 using namespace std;
 
-//ÒÔÏÂÎªÖØÒªµÄ±äÁ¿
-U8* sendbuf;        //ÓÃÀ´×éÖ¯·¢ËÍÊı¾İµÄ»º´æ£¬´óĞ¡ÎªMAX_BUFFER_SIZE,¿ÉÒÔÔÚÕâ¸ö»ù´¡ÉÏÀ©³äÉè¼Æ£¬ĞÎ³ÉÊÊºÏµÄ½á¹¹£¬Àı³ÌÖĞÃ»ÓĞÊ¹ÓÃ£¬Ö»ÊÇÌáĞÑÒ»ÏÂ
-int printCount = 0; //´òÓ¡¿ØÖÆ
-int spin = 0;  //´òÓ¡¶¯Ì¬ĞÅÏ¢¿ØÖÆ
+//ä»¥ä¸‹ä¸ºé‡è¦çš„å˜é‡
+U8* sendbuf;        //ç”¨æ¥ç»„ç»‡å‘é€æ•°æ®çš„ç¼“å­˜ï¼Œå¤§å°ä¸ºMAX_BUFFER_SIZE,å¯ä»¥åœ¨è¿™ä¸ªåŸºç¡€ä¸Šæ‰©å……è®¾è®¡ï¼Œå½¢æˆé€‚åˆçš„ç»“æ„ï¼Œä¾‹ç¨‹ä¸­æ²¡æœ‰ä½¿ç”¨ï¼Œåªæ˜¯æé†’ä¸€ä¸‹
+int printCount = 0; //æ‰“å°æ§åˆ¶
+int spin = 0;  //æ‰“å°åŠ¨æ€ä¿¡æ¯æ§åˆ¶
 
-//------»ªÀöµÄ·Ö¸îÏß£¬Ò»Ğ©Í³¼ÆÓÃµÄÈ«¾Ö±äÁ¿------------
-int iSndTotal = 0;  //·¢ËÍÊı¾İ×ÜÁ¿
-int iSndTotalCount = 0; //·¢ËÍÊı¾İ×Ü´ÎÊı
-int iSndErrorCount = 0;  //·¢ËÍ´íÎó´ÎÊı
-int iRcvForward = 0;     //×ª·¢Êı¾İ×ÜÁ¿
-int iRcvForwardCount = 0; //×ª·¢Êı¾İ×Ü´ÎÊı
-int iRcvToUpper = 0;      //´ÓµÍ²ãµİ½»¸ß²ãÊı¾İ×ÜÁ¿
-int iRcvToUpperCount = 0;  //´ÓµÍ²ãµİ½»¸ß²ãÊı¾İ×Ü´ÎÊı
-int iRcvUnknownCount = 0;  //ÊÕµ½²»Ã÷À´Ô´Êı¾İ×Ü´ÎÊı
+//------åä¸½çš„åˆ†å‰²çº¿ï¼Œä¸€äº›ç»Ÿè®¡ç”¨çš„å…¨å±€å˜é‡------------
+int iSndTotal = 0;  //å‘é€æ•°æ®æ€»é‡
+int iSndTotalCount = 0; //å‘é€æ•°æ®æ€»æ¬¡æ•°
+int iSndErrorCount = 0;  //å‘é€é”™è¯¯æ¬¡æ•°
+int iRcvForward = 0;     //è½¬å‘æ•°æ®æ€»é‡
+int iRcvForwardCount = 0; //è½¬å‘æ•°æ®æ€»æ¬¡æ•°
+int iRcvToUpper = 0;      //ä»ä½å±‚é€’äº¤é«˜å±‚æ•°æ®æ€»é‡
+int iRcvToUpperCount = 0;  //ä»ä½å±‚é€’äº¤é«˜å±‚æ•°æ®æ€»æ¬¡æ•°
+int iRcvUnknownCount = 0;  //æ”¶åˆ°ä¸æ˜æ¥æºæ•°æ®æ€»æ¬¡æ•°
 
-//´òÓ¡Í³¼ÆĞÅÏ¢
+int iRetransCount = 0;  // é‡ä¼ æ¬¡æ•°
+int iAckCount = 0;      // ACKæ¥æ”¶æ¬¡æ•°
+int iNakCount = 0;      // NAKæ¥æ”¶æ¬¡æ•°
+int expectedSeqNum = 0;  // æœŸæœ›æ¥æ”¶çš„åºåˆ—å·
+Frame recvWindow[WINDOW_SIZE];  // æ¥æ”¶çª—å£
+// åœ¨æ–‡ä»¶é¡¶éƒ¨æ·»åŠ ä»¥ä¸‹å®šä¹‰
+#define WINDOW_SIZE 4
+#define MAX_SEQ_NUM 8
+
+// æ·»åŠ æ»‘åŠ¨çª—å£ç»“æ„ä½“
+typedef struct {
+    U8* data;
+    int len;
+    int seqNum;
+    bool acked;
+    time_t sendTime;
+} Frame;
+
+// æ·»åŠ å…¨å±€å˜é‡
+Frame sendWindow[WINDOW_SIZE];
+int nextSeqNum = 0;
+int baseSeqNum = 0;
+//æ‰“å°ç»Ÿè®¡ä¿¡æ¯
 void print_statistics();
 void menu();
-//***************ÖØÒªº¯ÊıÌáĞÑ******************************
-//Ãû³Æ£ºInitFunction
-//¹¦ÄÜ£º³õÊ¼»¯¹¦ÄÜÃæ£¬ÓÉmainº¯ÊıÔÚ¶ÁÍêÅäÖÃÎÄ¼ş£¬ÕıÊ½½øÈëÇı¶¯»úÖÆÇ°µ÷ÓÃ
-//ÊäÈë£º
-//Êä³ö£º
+//***************é‡è¦å‡½æ•°æé†’******************************
+//åç§°ï¼šInitFunction
+//åŠŸèƒ½ï¼šåˆå§‹åŒ–åŠŸèƒ½é¢ï¼Œç”±mainå‡½æ•°åœ¨è¯»å®Œé…ç½®æ–‡ä»¶ï¼Œæ­£å¼è¿›å…¥é©±åŠ¨æœºåˆ¶å‰è°ƒç”¨
+//è¾“å…¥ï¼š
+//è¾“å‡ºï¼š
 void InitFunction(CCfgFileParms& cfgParms)
 {
-	sendbuf = (char*)malloc(MAX_BUFFER_SIZE);
-	if (sendbuf == NULL ) {
-		cout << "ÄÚ´æ²»¹»" << endl;
-		//Õâ¸ö£¬¼ÆËã»úÒ²Ì«£¬ÍË³ö°É
-		exit(0);
-	}
-	return;
+    sendbuf = (char*)malloc(MAX_BUFFER_SIZE);
+    if (sendbuf == NULL) {
+        cout << "å†…å­˜ä¸å¤Ÿ" << endl;
+        //è¿™ä¸ªï¼Œè®¡ç®—æœºä¹Ÿå¤ªæ‹‰äº†ï¼Œé€€å‡ºå§
+        exit(0);
+    }
+    return;
 }
-//***************ÖØÒªº¯ÊıÌáĞÑ******************************
-//Ãû³Æ£ºEndFunction
-//¹¦ÄÜ£º½áÊø¹¦ÄÜÃæ£¬ÓÉmainº¯ÊıÔÚÊÕµ½exitÃüÁî£¬Õû¸ö³ÌĞòÍË³öÇ°µ÷ÓÃ
-//ÊäÈë£º
-//Êä³ö£º
-void EndFunction()
-{
-	if(sendbuf != NULL)
-		free(sendbuf);
-	return;
+//***************é‡è¦å‡½æ•°æé†’******************************
+//åç§°ï¼šEndFunction
+//åŠŸèƒ½ï¼šç»“æŸåŠŸèƒ½é¢ï¼Œç”±mainå‡½æ•°åœ¨æ”¶åˆ°exitå‘½ä»¤ï¼Œæ•´ä¸ªç¨‹åºé€€å‡ºå‰è°ƒç”¨
+//è¾“å…¥ï¼š
+//è¾“å‡ºï¼š
+void EndFunction() {
+    if (sendbuf != NULL)
+        free(sendbuf);
+
+    // é‡Šæ”¾æ»‘åŠ¨çª—å£å†…å­˜
+    for (int i = 0; i < WINDOW_SIZE; i++) {
+        if (sendWindow[i].data != NULL) {
+            free(sendWindow[i].data);
+        }
+    }
 }
 
-//***************ÖØÒªº¯ÊıÌáĞÑ******************************
-//Ãû³Æ£ºTimeOut
-//¹¦ÄÜ£º±¾º¯Êı±»µ÷ÓÃÊ±£¬ÒâÎ¶×ÅsBasicTimerÖĞÉèÖÃµÄ³¬Ê±Ê±¼äµ½ÁË£¬
-//      º¯ÊıÄÚÈİ¿ÉÒÔÈ«²¿Ìæ»»ÎªÉè¼ÆÕß×Ô¼ºµÄÏë·¨
-//      Àı³ÌÖĞÊµÏÖÁË¼¸¸öÍ¬Ê±½øĞĞ¹¦ÄÜ£¬¹©²Î¿¼
-//      1)¸ù¾İiWorkMode¹¤×÷Ä£Ê½£¬ÅĞ¶ÏÊÇ·ñ½«¼üÅÌÊäÈëµÄÊı¾İ·¢ËÍ£¬
-//        ÒòÎªscanf»á×èÈû£¬µ¼ÖÂ¼ÆÊ±Æ÷ÔÚµÈ´ı¼üÅÌµÄÊ±ºòÍêÈ«Ê§Ğ§£¬ËùÒÔÊ¹ÓÃ_kbhit()ÎŞ×èÈû¡¢²»¼ä¶ÏµØÔÚ¼ÆÊ±µÄ¿ØÖÆÏÂÅĞ¶Ï¼üÅÌ×´Ì¬£¬Õâ¸öµãGetµ½Ã»£¿
-//      2)²»¶ÏË¢ĞÂ´òÓ¡¸÷ÖÖÍ³¼ÆÖµ£¬Í¨¹ı´òÓ¡¿ØÖÆ·ûµÄ¿ØÖÆ£¬¿ÉÒÔÊ¼ÖÕ±£³ÖÔÚÍ¬Ò»ĞĞ´òÓ¡£¬Get£¿
-//ÊäÈë£ºÊ±¼äµ½ÁË¾Í´¥·¢£¬Ö»ÄÜÍ¨¹ıÈ«¾Ö±äÁ¿¹©¸øÊäÈë
-//Êä³ö£ºÕâ¾ÍÊÇ¸ö²»¶ÏÅ¬Á¦¸É»îµÄÀÏÊµº¢×Ó
-void TimeOut()
-{
-
-	printCount++;
-	if (_kbhit()) {
-		//¼üÅÌÓĞ¶¯×÷£¬½øÈë²Ëµ¥Ä£Ê½
-		menu();
-	}
-
-	print_statistics();
+//***************é‡è¦å‡½æ•°æé†’******************************
+//åç§°ï¼šTimeOut
+//åŠŸèƒ½ï¼šæœ¬å‡½æ•°è¢«è°ƒç”¨æ—¶ï¼Œæ„å‘³ç€sBasicTimerä¸­è®¾ç½®çš„è¶…æ—¶æ—¶é—´åˆ°äº†ï¼Œ
+//      å‡½æ•°å†…å®¹å¯ä»¥å…¨éƒ¨æ›¿æ¢ä¸ºè®¾è®¡è€…è‡ªå·±çš„æƒ³æ³•
+//      ä¾‹ç¨‹ä¸­å®ç°äº†å‡ ä¸ªåŒæ—¶è¿›è¡ŒåŠŸèƒ½ï¼Œä¾›å‚è€ƒ
+//      1)æ ¹æ®iWorkModeå·¥ä½œæ¨¡å¼ï¼Œåˆ¤æ–­æ˜¯å¦å°†é”®ç›˜è¾“å…¥çš„æ•°æ®å‘é€ï¼Œ
+//        å› ä¸ºscanfä¼šé˜»å¡ï¼Œå¯¼è‡´è®¡æ—¶å™¨åœ¨ç­‰å¾…é”®ç›˜çš„æ—¶å€™å®Œå…¨å¤±æ•ˆï¼Œæ‰€ä»¥ä½¿ç”¨_kbhit()æ— é˜»å¡ã€ä¸é—´æ–­åœ°åœ¨è®¡æ—¶çš„æ§åˆ¶ä¸‹åˆ¤æ–­é”®ç›˜çŠ¶æ€ï¼Œè¿™ä¸ªç‚¹Getåˆ°æ²¡ï¼Ÿ
+//      2)ä¸æ–­åˆ·æ–°æ‰“å°å„ç§ç»Ÿè®¡å€¼ï¼Œé€šè¿‡æ‰“å°æ§åˆ¶ç¬¦çš„æ§åˆ¶ï¼Œå¯ä»¥å§‹ç»ˆä¿æŒåœ¨åŒä¸€è¡Œæ‰“å°ï¼ŒGetï¼Ÿ
+//è¾“å…¥ï¼šæ—¶é—´åˆ°äº†å°±è§¦å‘ï¼Œåªèƒ½é€šè¿‡å…¨å±€å˜é‡ä¾›ç»™è¾“å…¥
+//è¾“å‡ºï¼šè¿™å°±æ˜¯ä¸ªä¸æ–­åŠªåŠ›å¹²æ´»çš„è€å®å­©å­
+void TimeOut() {
+    // æ£€æŸ¥è¶…æ—¶å¸§
+    time_t now = time(NULL);
+    for (int i = baseSeqNum; i < nextSeqNum; i++) {
+        int idx = i % WINDOW_SIZE;
+        if (!sendWindow[idx].acked &&
+            difftime(now, sendWindow[idx].sendTime) > 2.0) {
+            SendtoLower(sendWindow[idx].data, sendWindow[idx].len, 0);
+            sendWindow[idx].sendTime = now;
+        }
+    }
+    // ... existing code ...
 }
-//------------»ªÀöµÄ·Ö¸îÏß£¬ÒÔÏÂÊÇÊı¾İµÄÊÕ·¢,--------------------------------------------
 
-//***************ÖØÒªº¯ÊıÌáĞÑ******************************
-//Ãû³Æ£ºRecvfromUpper
-//¹¦ÄÜ£º±¾º¯Êı±»µ÷ÓÃÊ±£¬ÒâÎ¶×ÅÊÕµ½Ò»·İ¸ß²ãÏÂ·¢µÄÊı¾İ
-//      º¯ÊıÄÚÈİÈ«²¿¿ÉÒÔÌæ»»³ÉÉè¼ÆÕß×Ô¼ºµÄ
-//      Àı³Ì¹¦ÄÜ½éÉÜ
-//         1)Í¨¹ıµÍ²ãµÄÊı¾İ¸ñÊ½²ÎÊılowerMode£¬ÅĞ¶ÏÒª²»Òª½«Êı¾İ×ª»»³ÉbitÁ÷Êı×é·¢ËÍ£¬·¢ËÍÖ»·¢¸øµÍ²ã½Ó¿Ú0£¬
-//           ÒòÎªÃ»ÓĞÈÎºÎ¿É¹©²Î¿¼µÄ²ßÂÔ£¬½²µÀÀíÊÇÓ¦¸Ã¸ù¾İÄ¿µÄµØÖ·ÔÚ¶à¸ö½Ó¿ÚÖĞÑ¡Ôñ×ª·¢µÄ¡£
-//         2)ÅĞ¶ÏiWorkMode£¬¿´¿´ÊÇ²»ÊÇĞèÒª½«·¢ËÍµÄÊı¾İÄÚÈİ¶¼´òÓ¡£¬µ÷ÊÔÊ±¿ÉÒÔ£¬ÕıÊ½ÔËĞĞÊ±²»½¨Òé½«ÄÚÈİÈ«²¿´òÓ¡¡£
-//ÊäÈë£ºU8 * buf,¸ß²ã´«½øÀ´µÄÊı¾İ£¬ int len£¬Êı¾İ³¤¶È£¬µ¥Î»×Ö½Ú
-//Êä³ö£º
+//CRCæ ¡éªŒå‡½æ•°
+U32 CalculateCRC(U8* buf, int len) {
+    U32 crc = 0xFFFFFFFF;
+    for (int i = 0; i < len; i++) {
+        crc ^= buf[i];
+        for (int j = 0; j < 8; j++) {
+            if (crc & 1) crc = (crc >> 1) ^ 0xEDB88320;
+            else crc >>= 1;
+        }
+    }
+    return ~crc;
+}
+//------------åä¸½çš„åˆ†å‰²çº¿ï¼Œä»¥ä¸‹æ˜¯æ•°æ®çš„æ”¶å‘,--------------------------------------------
+void ScrambleBits(U8* buf, int len, double errorRate) {
+    int totalBits = len * 8;
+    int errorBits = static_cast<int>(totalBits * errorRate);
+
+    for (int i = 0; i < errorBits; ++i) {
+        int bitIndex = rand() % totalBits;
+        int byteIndex = bitIndex / 8;
+        int bitOffset = bitIndex % 8;
+
+        buf[byteIndex] ^= (1 << bitOffset); // ç¿»è½¬æŒ‡å®šçš„æ¯”ç‰¹ä½
+    }
+}
+
+//***************é‡è¦å‡½æ•°æé†’******************************
+//åç§°ï¼šRecvfromUpper
+//åŠŸèƒ½ï¼šæœ¬å‡½æ•°è¢«è°ƒç”¨æ—¶ï¼Œæ„å‘³ç€æ”¶åˆ°ä¸€ä»½é«˜å±‚ä¸‹å‘çš„æ•°æ®
+//      å‡½æ•°å†…å®¹å…¨éƒ¨å¯ä»¥æ›¿æ¢æˆè®¾è®¡è€…è‡ªå·±çš„
+//      ä¾‹ç¨‹åŠŸèƒ½ä»‹ç»
+//         1)é€šè¿‡ä½å±‚çš„æ•°æ®æ ¼å¼å‚æ•°lowerModeï¼Œåˆ¤æ–­è¦ä¸è¦å°†æ•°æ®è½¬æ¢æˆbitæµæ•°ç»„å‘é€ï¼Œå‘é€åªå‘ç»™ä½å±‚æ¥å£0ï¼Œ
+//           å› ä¸ºæ²¡æœ‰ä»»ä½•å¯ä¾›å‚è€ƒçš„ç­–ç•¥ï¼Œè®²é“ç†æ˜¯åº”è¯¥æ ¹æ®ç›®çš„åœ°å€åœ¨å¤šä¸ªæ¥å£ä¸­é€‰æ‹©è½¬å‘çš„ã€‚
+//         2)åˆ¤æ–­iWorkModeï¼Œçœ‹çœ‹æ˜¯ä¸æ˜¯éœ€è¦å°†å‘é€çš„æ•°æ®å†…å®¹éƒ½æ‰“å°ï¼Œè°ƒè¯•æ—¶å¯ä»¥ï¼Œæ­£å¼è¿è¡Œæ—¶ä¸å»ºè®®å°†å†…å®¹å…¨éƒ¨æ‰“å°ã€‚
+//è¾“å…¥ï¼šU8 * buf,é«˜å±‚ä¼ è¿›æ¥çš„æ•°æ®ï¼Œ int lenï¼Œæ•°æ®é•¿åº¦ï¼Œå•ä½å­—èŠ‚
+//è¾“å‡ºï¼š
+//void RecvfromUpper(U8* buf, int len)
+//{
+//	int iSndRetval;
+//	U8* bufSend = NULL;
+//	//æ˜¯é«˜å±‚æ•°æ®ï¼Œåªä»æ¥å£0å‘å‡ºå»,é«˜å±‚æ¥å£é»˜è®¤éƒ½æ˜¯å­—èŠ‚æµæ•°æ®æ ¼å¼
+//	if (lowerMode[0] == 0) {
+//		//æ¥å£0çš„æ¨¡å¼ä¸ºbitæ•°ç»„ï¼Œå…ˆè½¬æ¢æˆbitæ•°ç»„ï¼Œæ”¾åˆ°bufSendé‡Œ
+//		bufSend = (char*)malloc(len * 8);
+//		if (bufSend == NULL) {
+//			return;
+//		}
+//		iSndRetval = ByteArrayToBitArray(bufSend, len * 8, buf, len);
+//		//å‘é€
+//		iSndRetval = SendtoLower(bufSend, iSndRetval, 0); //å‚æ•°ä¾æ¬¡ä¸ºæ•°æ®ç¼“å†²ï¼Œé•¿åº¦ï¼Œæ¥å£å·
+//	}
+//	else {
+//		//ä¸‹å±‚æ˜¯å­—èŠ‚æ•°ç»„æ¥å£ï¼Œå¯ç›´æ¥å‘é€
+//		iSndRetval = SendtoLower(buf, len, 0);
+//		iSndRetval = iSndRetval * 8;//æ¢ç®—æˆä½
+//	}
+//	//å¦‚æœè€ƒè™‘è®¾è®¡åœç­‰åè®®ç­‰é‡ä¼ åè®®ï¼Œè¿™ä»½æ•°æ®éœ€è¦ç¼“å†²èµ·æ¥ï¼Œåº”è¯¥å¦å¤–ç”³è¯·ç©ºé—´ï¼ŒæŠŠbufæˆ–bufSendçš„å†…å®¹ä¿å­˜èµ·æ¥ï¼Œä»¥å¤‡é‡ä¼ 
+//	if (bufSend != NULL) {
+//		//ä¿å­˜bufSendå†…å®¹ï¼ŒCODES NEED HERE
+//
+//		//æœ¬ä¾‹ç¨‹æ²¡æœ‰è®¾è®¡é‡ä¼ åè®®ï¼Œä¸éœ€è¦ä¿å­˜æ•°æ®ï¼Œæ‰€ä»¥å°†ç©ºé—´é‡Šæ”¾
+//		free(bufSend);
+//	}
+//	else {
+//		//ä¿å­˜bufå†…å®¹ï¼ŒCODES NEED HERE
+//
+//		//æœ¬ä¾‹ç¨‹æ²¡æœ‰è®¾è®¡é‡ä¼ åè®®ï¼Œä¸éœ€è¦ä¿å­˜æ•°æ®ï¼Œbufæ˜¯è¾“å…¥å‚æ•°ï¼Œä¹Ÿä¸éœ€è¦é‡Šæ”¾ç©ºé—´
+//
+//	}
+//
+//	//ç»Ÿè®¡
+//	if (iSndRetval <= 0) {
+//		iSndErrorCount++;
+//	}
+//	else {
+//		iSndTotal += iSndRetval;
+//		iSndTotalCount++;
+//	}
+//	//printf("\næ”¶åˆ°ä¸Šå±‚æ•°æ® %d ä½ï¼Œå‘é€åˆ°æ¥å£0\n", retval * 8);
+//	//æ‰“å°
+//	switch (iWorkMode % 10) {
+//	case 1:
+//		cout << endl << "é«˜å±‚è¦æ±‚å‘æ¥å£ " << 0 << " å‘é€æ•°æ®ï¼š" << endl;
+//		print_data_bit(buf, len, 1);
+//		break;
+//	case 2:
+//		cout << endl << "é«˜å±‚è¦æ±‚å‘æ¥å£ " << 0 << " å‘é€æ•°æ®ï¼š" << endl;
+//		print_data_byte(buf, len, 1);
+//		break;
+//	case 0:
+//		break;
+//	}
+//
+//}
 void RecvfromUpper(U8* buf, int len)
 {
-	int iSndRetval;
-	U8* bufSend = NULL;
-	//ÊÇ¸ß²ãÊı¾İ£¬Ö»´Ó½Ó¿Ú0·¢³öÈ¥,¸ß²ã½Ó¿ÚÄ¬ÈÏ¶¼ÊÇ×Ö½ÚÁ÷Êı¾İ¸ñÊ½
-	if (lowerMode[0] == 0) {
-		//½Ó¿Ú0µÄÄ£Ê½ÎªbitÊı×é£¬ÏÈ×ª»»³ÉbitÊı×é£¬·Åµ½bufSendÀï
-		bufSend = (char*)malloc(len * 8);
-		if (bufSend == NULL) {
-			return;
-		}
-		iSndRetval = ByteArrayToBitArray(bufSend, len * 8, buf, len);
-		//·¢ËÍ
-		iSndRetval = SendtoLower(bufSend, iSndRetval, 0); //²ÎÊıÒÀ´ÎÎªÊı¾İ»º³å£¬³¤¶È£¬½Ó¿ÚºÅ
-	}
-	else {
-		//ÏÂ²ãÊÇ×Ö½ÚÊı×é½Ó¿Ú£¬¿ÉÖ±½Ó·¢ËÍ
-		iSndRetval = SendtoLower(buf, len, 0);
-		iSndRetval = iSndRetval * 8;//»»Ëã³ÉÎ»
-	}
-	//Èç¹û¿¼ÂÇÉè¼ÆÍ£µÈĞ­ÒéµÈÖØ´«Ğ­Òé£¬Õâ·İÊı¾İĞèÒª»º³åÆğÀ´£¬Ó¦¸ÃÁíÍâÉêÇë¿Õ¼ä£¬°Ñbuf»òbufSendµÄÄÚÈİ±£´æÆğÀ´£¬ÒÔ±¸ÖØ´«
-	if (bufSend != NULL) {
-		//±£´æbufSendÄÚÈİ£¬CODES NEED HERE
+    // æ»‘åŠ¨çª—å£æ§åˆ¶
+    if (nextSeqNum >= baseSeqNum + WINDOW_SIZE) {
+        cout << "å‘é€çª—å£å·²æ»¡ï¼Œè¯·ç¨åå†è¯•" << endl;
+        return;
+    }
 
-		//±¾Àı³ÌÃ»ÓĞÉè¼ÆÖØ´«Ğ­Òé£¬²»ĞèÒª±£´æÊı¾İ£¬ËùÒÔ½«¿Õ¼äÊÍ·Å
-		free(bufSend);
-	}
-	else {
-		//±£´æbufÄÚÈİ£¬CODES NEED HERE
+    int frameHeaderSize = 4; // å¸§å¤´å¤§å°
+    int frameFooterSize = 4; // å¸§å°¾(CRC)å¤§å°
+    int totalLen = len + frameHeaderSize + frameFooterSize;
 
-		//±¾Àı³ÌÃ»ÓĞÉè¼ÆÖØ´«Ğ­Òé£¬²»ĞèÒª±£´æÊı¾İ£¬bufÊÇÊäÈë²ÎÊı£¬Ò²²»ĞèÒªÊÍ·Å¿Õ¼ä
+    // åˆ†é…å¸§å†…å­˜
+    Frame* frame = &sendWindow[nextSeqNum % WINDOW_SIZE];
+    frame->data = (U8*)malloc(totalLen);
+    if (!frame->data) {
+        cout << "å†…å­˜ä¸è¶³ï¼Œæ— æ³•å‘é€æ•°æ®" << endl;
+        return;
+    }
 
-	}
+    // å°è£…å¸§
+    // å¸§å¤´(4å­—èŠ‚)
+    frame->data[0] = 0xAA;
+    frame->data[1] = 0xBB;
+    frame->data[2] = nextSeqNum; // åºåˆ—å·
+    frame->data[3] = 0x00; // æ§åˆ¶ä½
 
-	//Í³¼Æ
-	if (iSndRetval <= 0) {
-		iSndErrorCount++;
-	}
-	else {
-		iSndTotal += iSndRetval;
-		iSndTotalCount++;
-	}
-	//printf("\nÊÕµ½ÉÏ²ãÊı¾İ %d Î»£¬·¢ËÍµ½½Ó¿Ú0\n", retval * 8);
-	//´òÓ¡
-	switch (iWorkMode % 10) {
-	case 1:
-		cout << endl << "¸ß²ãÒªÇóÏò½Ó¿Ú " << 0 << " ·¢ËÍÊı¾İ£º" << endl;
-		print_data_bit(buf, len, 1);
-		break;
-	case 2:
-		cout << endl << "¸ß²ãÒªÇóÏò½Ó¿Ú " << 0 << " ·¢ËÍÊı¾İ£º" << endl;
-		print_data_byte(buf, len, 1);
-		break;
-	case 0:
-		break;
-	}
+    // æ•°æ®éƒ¨åˆ†
+    memcpy(frame->data + frameHeaderSize, buf, len);
 
+    // CRCæ ¡éªŒ(å¸§å°¾)
+    U32 crc = CalculateCRC(buf, len);
+    memcpy(frame->data + frameHeaderSize + len, &crc, frameFooterSize);
+
+    frame->len = totalLen;
+    frame->seqNum = nextSeqNum;
+    frame->acked = false;
+    frame->sendTime = time(NULL);
+
+    // å‘é€å¤„ç†
+    int iSndRetval;
+    if (lowerMode[0] == 0) {
+        // éœ€è¦è½¬æ¢ä¸ºæ¯”ç‰¹æµ
+        U8* bitStream = (U8*)malloc(totalLen * 8);
+        if (!bitStream) {
+            cout << "å†…å­˜ä¸è¶³ï¼Œæ— æ³•è½¬æ¢ä¸ºæ¯”ç‰¹æµ" << endl;
+            free(frame->data);
+            return;
+        }
+        int bitLen = ByteArrayToBitArray(bitStream, totalLen * 8, frame->data, totalLen);
+        iSndRetval = SendtoLower(bitStream, bitLen, 0);
+        free(bitStream);
+    }
+    else {
+        // ç›´æ¥å‘é€å­—èŠ‚æµ
+        iSndRetval = SendtoLower(frame->data, totalLen, 0);
+        iSndRetval = iSndRetval * 8; // æ¢ç®—æˆä½
+    }
+
+    // ç»Ÿè®¡å¤„ç†
+    if (iSndRetval <= 0) {
+        iSndErrorCount++;
+        free(frame->data);
+        frame->data = NULL;
+    }
+    else {
+        nextSeqNum++;
+        iSndTotal += len * 8;
+        iSndTotalCount++;
+    }
+
+    // æ‰“å°è°ƒè¯•ä¿¡æ¯
+    switch (iWorkMode % 10) {
+    case 1:
+        cout << endl << "é«˜å±‚è¦æ±‚å‘æ¥å£ " << 0 << " å‘é€æ•°æ®ï¼š" << endl;
+        print_data_bit(frame->data, totalLen, 1);
+        break;
+    case 2:
+        cout << endl << "é«˜å±‚è¦æ±‚å‘æ¥å£ " << 0 << " å‘é€æ•°æ®ï¼š" << endl;
+        print_data_byte(frame->data, totalLen, 1);
+        break;
+    case 0:
+        break;
+    }
 }
-//***************ÖØÒªº¯ÊıÌáĞÑ******************************
-//Ãû³Æ£ºRecvfromLower
-//¹¦ÄÜ£º±¾º¯Êı±»µ÷ÓÃÊ±£¬ÒâÎ¶×ÅµÃµ½Ò»·İ´ÓµÍ²ãÊµÌåµİ½»ÉÏÀ´µÄÊı¾İ
-//      º¯ÊıÄÚÈİÈ«²¿¿ÉÒÔÌæ»»³ÉÉè¼ÆÕßÏëÒªµÄÑù×Ó
-//      Àı³Ì¹¦ÄÜ½éÉÜ£º
-//          1)Àı³ÌÊµÏÖÁËÒ»¸ö¼òµ¥´Ö±©²»½²µÀÀíµÄ²ßÂÔ£¬ËùÓĞ´Ó½Ó¿Ú0ËÍÉÏÀ´µÄÊı¾İ¶¼Ö±½Ó×ª·¢µ½½Ó¿Ú1£¬¶ø½Ó¿Ú1µÄÊı¾İÉÏ½»¸ø¸ß²ã£¬¾ÍÊÇÕâÃ´ÈÎĞÔ
-//          2)×ª·¢ºÍÉÏ½»Ç°£¬ÅĞ¶ÏÊÕ½øÀ´µÄ¸ñÊ½ºÍÒª·¢ËÍ³öÈ¥µÄ¸ñÊ½ÊÇ·ñÏàÍ¬£¬·ñÔò£¬ÔÚbiteÁ÷Êı×éºÍ×Ö½ÚÁ÷Êı×éÖ®¼äÊµÏÖ×ª»»
-//            ×¢ÒâÕâĞ©ÅĞ¶Ï²¢²»ÊÇÀ´×ÔÊı¾İ±¾ÉíµÄÌØÕ÷£¬¶øÊÇÀ´×ÔÅäÖÃÎÄ¼ş£¬ËùÒÔÅäÖÃÎÄ¼şµÄ²ÎÊıĞ´´íÁË£¬ÅĞ¶ÏÒ²¾Í»áÊ§Îó
-//          3)¸ù¾İiWorkMode£¬ÅĞ¶ÏÊÇ·ñĞèÒª°ÑÊı¾İÄÚÈİ´òÓ¡
-//ÊäÈë£ºU8 * buf,µÍ²ãµİ½»ÉÏÀ´µÄÊı¾İ£¬ int len£¬Êı¾İ³¤¶È£¬µ¥Î»×Ö½Ú£¬int ifNo £¬µÍ²ãÊµÌåºÅÂë£¬ÓÃÀ´Çø·ÖÊÇÄÄ¸öµÍ²ã
-//Êä³ö£º
+
+//***************é‡è¦å‡½æ•°æé†’******************************
+//åç§°ï¼šRecvfromLower
+//åŠŸèƒ½ï¼šæœ¬å‡½æ•°è¢«è°ƒç”¨æ—¶ï¼Œæ„å‘³ç€å¾—åˆ°ä¸€ä»½ä»ä½å±‚å®ä½“é€’äº¤ä¸Šæ¥çš„æ•°æ®
+//      å‡½æ•°å†…å®¹å…¨éƒ¨å¯ä»¥æ›¿æ¢æˆè®¾è®¡è€…æƒ³è¦çš„æ ·å­
+//      ä¾‹ç¨‹åŠŸèƒ½ä»‹ç»ï¼š
+//          1)ä¾‹ç¨‹å®ç°äº†ä¸€ä¸ªç®€å•ç²—æš´ä¸è®²é“ç†çš„ç­–ç•¥ï¼Œæ‰€æœ‰ä»æ¥å£0é€ä¸Šæ¥çš„æ•°æ®éƒ½ç›´æ¥è½¬å‘åˆ°æ¥å£1ï¼Œè€Œæ¥å£1çš„æ•°æ®ä¸Šäº¤ç»™é«˜å±‚ï¼Œå°±æ˜¯è¿™ä¹ˆä»»æ€§
+//          2)è½¬å‘å’Œä¸Šäº¤å‰ï¼Œåˆ¤æ–­æ”¶è¿›æ¥çš„æ ¼å¼å’Œè¦å‘é€å‡ºå»çš„æ ¼å¼æ˜¯å¦ç›¸åŒï¼Œå¦åˆ™ï¼Œåœ¨biteæµæ•°ç»„å’Œå­—èŠ‚æµæ•°ç»„ä¹‹é—´å®ç°è½¬æ¢
+//            æ³¨æ„è¿™äº›åˆ¤æ–­å¹¶ä¸æ˜¯æ¥è‡ªæ•°æ®æœ¬èº«çš„ç‰¹å¾ï¼Œè€Œæ˜¯æ¥è‡ªé…ç½®æ–‡ä»¶ï¼Œæ‰€ä»¥é…ç½®æ–‡ä»¶çš„å‚æ•°å†™é”™äº†ï¼Œåˆ¤æ–­ä¹Ÿå°±ä¼šå¤±è¯¯
+//          3)æ ¹æ®iWorkModeï¼Œåˆ¤æ–­æ˜¯å¦éœ€è¦æŠŠæ•°æ®å†…å®¹æ‰“å°
+//è¾“å…¥ï¼šU8 * buf,ä½å±‚é€’äº¤ä¸Šæ¥çš„æ•°æ®ï¼Œ int lenï¼Œæ•°æ®é•¿åº¦ï¼Œå•ä½å­—èŠ‚ï¼Œint ifNo ï¼Œä½å±‚å®ä½“å·ç ï¼Œç”¨æ¥åŒºåˆ†æ˜¯å“ªä¸ªä½å±‚
+//è¾“å‡ºï¼š
+
+//void RecvfromLower(U8* buf, int len, int ifNo)
+//{
+//	int iSndRetval;
+//	U8* bufSend = NULL;
+//	if (ifNo == 0 && lowerNumber > 1) {
+//		//ä»æ¥å£0æ”¶åˆ°çš„æ•°æ®ï¼Œç›´æ¥è½¬å‘åˆ°æ¥å£1 â€”â€” ä»…ä»…ç”¨äºæµ‹è¯•
+//		if (lowerMode[0] == lowerMode[1]) {
+//			//æ¥å£0å’Œ1çš„æ•°æ®æ ¼å¼ç›¸åŒï¼Œç›´æ¥è½¬å‘
+//			iSndRetval = SendtoLower(buf, len, 1);
+//			if (lowerMode[0] == 1) {
+//				iSndRetval = iSndRetval * 8;//å¦‚æœæ¥å£æ ¼å¼ä¸ºbitæ•°ç»„ï¼Œç»Ÿä¸€æ¢ç®—æˆä½ï¼Œå®Œæˆç»Ÿè®¡
+//			}
+//		}
+//		else {
+//			//æ¥å£0ä¸æ¥å£1çš„æ•°æ®æ ¼å¼ä¸åŒï¼Œéœ€è¦è½¬æ¢åï¼Œå†å‘é€
+//			if (lowerMode[0] == 1) {
+//				//ä»æ¥å£0åˆ°æ¥å£1ï¼Œæ¥å£0æ˜¯å­—èŠ‚æ•°ç»„ï¼Œæ¥å£1æ˜¯æ¯”ç‰¹æ•°ç»„ï¼Œéœ€è¦æ‰©å¤§8å€è½¬æ¢
+//				bufSend = (U8*)malloc(len * 8);
+//				if (bufSend == NULL) {
+//					cout << "å†…å­˜ç©ºé—´ä¸å¤Ÿï¼Œå¯¼è‡´æ•°æ®æ²¡æœ‰è¢«å¤„ç†" << endl;
+//					return;
+//				}
+//				//byte to bit
+//				iSndRetval = ByteArrayToBitArray(bufSend, len * 8, buf, len);
+//				iSndRetval = SendtoLower(bufSend, iSndRetval, 1);
+//			}
+//			else {
+//				//ä»æ¥å£0åˆ°æ¥å£1ï¼Œæ¥å£0æ˜¯æ¯”ç‰¹æ•°ç»„ï¼Œæ¥å£1æ˜¯å­—èŠ‚æ•°ç»„ï¼Œéœ€è¦ç¼©å°å…«åˆ†ä¹‹ä¸€è½¬æ¢
+//				bufSend = (U8*)malloc(len / 8 + 1);
+//				if (bufSend == NULL) {
+//					cout << "å†…å­˜ç©ºé—´ä¸å¤Ÿï¼Œå¯¼è‡´æ•°æ®æ²¡æœ‰è¢«å¤„ç†" << endl;
+//					return;
+//				}
+//				//bit to byte
+//				iSndRetval = BitArrayToByteArray(buf, len, bufSend, len / 8 + 1);
+//				iSndRetval = SendtoLower(bufSend, iSndRetval, 1);
+//
+//				iSndRetval = iSndRetval * 8;//æ¢ç®—æˆä½ï¼Œåšç»Ÿè®¡
+//
+//			}
+//		}
+//		//ç»Ÿè®¡
+//		if (iSndRetval <= 0) {
+//			iSndErrorCount++;
+//		}
+//		else {
+//			iRcvForward += iSndRetval;
+//			iRcvForwardCount++;
+//		}
+//	}
+//	else {
+//		//éæ¥å£0çš„æ•°æ®ï¼Œæˆ–è€…ä½å±‚åªæœ‰1ä¸ªæ¥å£çš„æ•°æ®ï¼Œéƒ½å‘ä¸Šé€’äº¤
+//		if (lowerMode[ifNo] == 0) {
+//			//å¦‚æœæ¥å£0æ˜¯æ¯”ç‰¹æ•°ç»„æ ¼å¼ï¼Œé«˜å±‚é»˜è®¤æ˜¯å­—èŠ‚æ•°ç»„ï¼Œå…ˆè½¬æ¢æˆå­—èŠ‚æ•°ç»„ï¼Œå†å‘ä¸Šé€’äº¤
+//			bufSend = (U8*)malloc(len / 8 + 1);
+//			if (bufSend == NULL) {
+//				cout << "å†…å­˜ç©ºé—´ä¸å¤Ÿï¼Œå¯¼è‡´æ•°æ®æ²¡æœ‰è¢«å¤„ç†" << endl;
+//				return;
+//			}
+//			iSndRetval = BitArrayToByteArray(buf, len, bufSend, len / 8 + 1);
+//			iSndRetval = SendtoUpper(bufSend, iSndRetval);
+//			iSndRetval = iSndRetval * 8;//æ¢ç®—æˆä½,è¿›è¡Œç»Ÿè®¡
+//
+//		}
+//		else {
+//			//ä½å±‚æ˜¯å­—èŠ‚æ•°ç»„æ¥å£ï¼Œå¯ç›´æ¥é€’äº¤
+//			iSndRetval = SendtoUpper(buf, len);
+//			iSndRetval = iSndRetval * 8;//æ¢ç®—æˆä½ï¼Œè¿›è¡Œç»Ÿè®¡
+//		}
+//		//ç»Ÿè®¡
+//		if (iSndRetval <= 0) {
+//			iSndErrorCount++;
+//		}
+//		else {
+//			iRcvToUpper += iSndRetval;
+//			iRcvToUpperCount++;
+//		}
+//	}
+//	//å¦‚æœéœ€è¦é‡ä¼ ç­‰æœºåˆ¶ï¼Œå¯èƒ½éœ€è¦å°†bufæˆ–bufSendä¸­çš„æ•°æ®å¦å¤–ç”³è¯·ç©ºé—´ç¼“å­˜èµ·æ¥
+//	if (bufSend != NULL) {
+//		//ç¼“å­˜bufSendæ•°æ®ï¼Œå¦‚æœæœ‰å¿…è¦çš„è¯
+//
+//		//æœ¬ä¾‹ç¨‹ä¸­æ²¡æœ‰åœç­‰åè®®ï¼ŒbufSendçš„ç©ºé—´åœ¨ç”¨å®Œä»¥åéœ€è¦é‡Šæ”¾
+//		free(bufSend);
+//	}
+//	else {
+//		//ç¼“å­˜bufé‡Œçš„æ•°æ®ï¼Œå¦‚æœæœ‰å¿…è¦çš„è¯
+//
+//		//bufç©ºé—´ä¸éœ€è¦é‡Šæ”¾
+//	}
+//
+//	//æ‰“å°
+//	switch (iWorkMode % 10) {
+//	case 1:
+//		cout <<endl<< "æ¥æ”¶æ¥å£ " << ifNo << " æ•°æ®ï¼š" << endl;
+//		print_data_bit(buf, len, lowerMode[ifNo]);
+//		break;
+//	case 2:
+//		cout << endl << "æ¥æ”¶æ¥å£ " << ifNo << " æ•°æ®ï¼š" << endl;
+//		print_data_byte(buf, len, lowerMode[ifNo]);
+//		break;
+//	case 0:
+//		break;
+//	}
+//
+//}
+
 void RecvfromLower(U8* buf, int len, int ifNo)
 {
-	int iSndRetval;
-	U8* bufSend = NULL;
-	if (ifNo == 0 && lowerNumber > 1) {
-		//´Ó½Ó¿Ú0ÊÕµ½µÄÊı¾İ£¬Ö±½Ó×ª·¢µ½½Ó¿Ú1 ¡ª¡ª ½ö½öÓÃÓÚ²âÊÔ
-		if (lowerMode[0] == lowerMode[1]) {
-			//½Ó¿Ú0ºÍ1µÄÊı¾İ¸ñÊ½ÏàÍ¬£¬Ö±½Ó×ª·¢
-			iSndRetval = SendtoLower(buf, len, 1);
-			if (lowerMode[0] == 1) {
-				iSndRetval = iSndRetval * 8;//Èç¹û½Ó¿Ú¸ñÊ½ÎªbitÊı×é£¬Í³Ò»»»Ëã³ÉÎ»£¬Íê³ÉÍ³¼Æ
-			}
-		}
-		else {
-			//½Ó¿Ú0Óë½Ó¿Ú1µÄÊı¾İ¸ñÊ½²»Í¬£¬ĞèÒª×ª»»ºó£¬ÔÙ·¢ËÍ
-			if (lowerMode[0] == 1) {
-				//´Ó½Ó¿Ú0µ½½Ó¿Ú1£¬½Ó¿Ú0ÊÇ×Ö½ÚÊı×é£¬½Ó¿Ú1ÊÇ±ÈÌØÊı×é£¬ĞèÒªÀ©´ó8±¶×ª»»
-				bufSend = (U8*)malloc(len * 8);
-				if (bufSend == NULL) {
-					cout << "ÄÚ´æ¿Õ¼ä²»¹»£¬µ¼ÖÂÊı¾İÃ»ÓĞ±»´¦Àí" << endl;
-					return;
-				}
-				//byte to bit
-				iSndRetval = ByteArrayToBitArray(bufSend, len * 8, buf, len);
-				iSndRetval = SendtoLower(bufSend, iSndRetval, 1);
-			}
-			else {
-				//´Ó½Ó¿Ú0µ½½Ó¿Ú1£¬½Ó¿Ú0ÊÇ±ÈÌØÊı×é£¬½Ó¿Ú1ÊÇ×Ö½ÚÊı×é£¬ĞèÒªËõĞ¡°Ë·ÖÖ®Ò»×ª»»
-				bufSend = (U8*)malloc(len / 8 + 1);
-				if (bufSend == NULL) {
-					cout << "ÄÚ´æ¿Õ¼ä²»¹»£¬µ¼ÖÂÊı¾İÃ»ÓĞ±»´¦Àí" << endl;
-					return;
-				}
-				//bit to byte
-				iSndRetval = BitArrayToByteArray(buf, len, bufSend, len / 8 + 1);
-				iSndRetval = SendtoLower(bufSend, iSndRetval, 1);
+    // æ£€æŸ¥æœ€å°å¸§é•¿åº¦(å¸§å¤´4å­—èŠ‚+å¸§å°¾4å­—èŠ‚)
+    if (len < 8) {
+        cout << "æ— æ•ˆå¸§é•¿åº¦" << endl;
+        return;
+    }
 
-				iSndRetval = iSndRetval * 8;//»»Ëã³ÉÎ»£¬×öÍ³¼Æ
+    // è§£æå¸§å¤´
+    if (buf[0] != 0xAA || buf[1] != 0xBB) {
+        cout << "æ— æ•ˆå¸§å¤´" << endl;
+        return;
+    }
 
-			}
-		}
-		//Í³¼Æ
-		if (iSndRetval <= 0) {
-			iSndErrorCount++;
-		}
-		else {
-			iRcvForward += iSndRetval;
-			iRcvForwardCount++;
-		}
-	}
-	else {
-		//·Ç½Ó¿Ú0µÄÊı¾İ£¬»òÕßµÍ²ãÖ»ÓĞ1¸ö½Ó¿ÚµÄÊı¾İ£¬¶¼ÏòÉÏµİ½»
-		if (lowerMode[ifNo] == 0) {
-			//Èç¹û½Ó¿Ú0ÊÇ±ÈÌØÊı×é¸ñÊ½£¬¸ß²ãÄ¬ÈÏÊÇ×Ö½ÚÊı×é£¬ÏÈ×ª»»³É×Ö½ÚÊı×é£¬ÔÙÏòÉÏµİ½»
-			bufSend = (U8*)malloc(len / 8 + 1);
-			if (bufSend == NULL) {
-				cout << "ÄÚ´æ¿Õ¼ä²»¹»£¬µ¼ÖÂÊı¾İÃ»ÓĞ±»´¦Àí" << endl;
-				return;
-			}
-			iSndRetval = BitArrayToByteArray(buf, len, bufSend, len / 8 + 1);
-			iSndRetval = SendtoUpper(bufSend, iSndRetval);
-			iSndRetval = iSndRetval * 8;//»»Ëã³ÉÎ»,½øĞĞÍ³¼Æ
+    int seqNum = buf[2];  // è·å–åºåˆ—å·
+    U8 control = buf[3];   // è·å–æ§åˆ¶ä½
+    int dataLen = len - 8; // è®¡ç®—æ•°æ®éƒ¨åˆ†é•¿åº¦
+    U8* payload = buf + 4; // æ•°æ®éƒ¨åˆ†æŒ‡é’ˆ
 
-		}
-		else {
-			//µÍ²ãÊÇ×Ö½ÚÊı×é½Ó¿Ú£¬¿ÉÖ±½Óµİ½»
-			iSndRetval = SendtoUpper(buf, len);
-			iSndRetval = iSndRetval * 8;//»»Ëã³ÉÎ»£¬½øĞĞÍ³¼Æ
-		}
-		//Í³¼Æ
-		if (iSndRetval <= 0) {
-			iSndErrorCount++;
-		}
-		else {
-			iRcvToUpper += iSndRetval;
-			iRcvToUpperCount++;
-		}
-	}
-	//Èç¹ûĞèÒªÖØ´«µÈ»úÖÆ£¬¿ÉÄÜĞèÒª½«buf»òbufSendÖĞµÄÊı¾İÁíÍâÉêÇë¿Õ¼ä»º´æÆğÀ´
-	if (bufSend != NULL) {
-		//»º´æbufSendÊı¾İ£¬Èç¹ûÓĞ±ØÒªµÄ»°
+    // æ ¡éªŒCRC
+    U32 receivedCRC;
+    memcpy(&receivedCRC, buf + len - 4, 4);
+    U32 calculatedCRC = CalculateCRC(payload, dataLen);
 
-		//±¾Àı³ÌÖĞÃ»ÓĞÍ£µÈĞ­Òé£¬bufSendµÄ¿Õ¼äÔÚÓÃÍêÒÔºóĞèÒªÊÍ·Å
-		free(bufSend);
-	}
-	else {
-		//»º´æbufÀïµÄÊı¾İ£¬Èç¹ûÓĞ±ØÒªµÄ»°
+    if (receivedCRC != calculatedCRC) {
+        cout << "CRCæ ¡éªŒå¤±è´¥" << endl;
+        return;
+    }
 
-		//buf¿Õ¼ä²»ĞèÒªÊÍ·Å
-	}
+    int iSndRetval;
+    U8* bufSend = NULL;
 
-	//´òÓ¡
-	switch (iWorkMode % 10) {
-	case 1:
-		cout <<endl<< "½ÓÊÕ½Ó¿Ú " << ifNo << " Êı¾İ£º" << endl;
-		print_data_bit(buf, len, lowerMode[ifNo]);
-		break;
-	case 2:
-		cout << endl << "½ÓÊÕ½Ó¿Ú " << ifNo << " Êı¾İ£º" << endl;
-		print_data_byte(buf, len, lowerMode[ifNo]);
-		break;
-	case 0:
-		break;
-	}
+    // å¤„ç†ACK/NAKå¸§
+    if (control == 0x01) { // ACKå¸§
+        ProcessAck(seqNum);
+        return;
+    }
+    else if (control == 0x02) { // NAKå¸§
+        // é‡ä¼ æŒ‡å®šåºåˆ—å·çš„å¸§
+        ResendFrame(seqNum);
+        return;
+    }
+
+    // æ­£å¸¸æ•°æ®å¸§å¤„ç†
+    if (seqNum == expectedSeqNum) {
+        if (ifNo == 0 && lowerNumber > 1) {
+            // ... existing forwarding logic ...
+        }
+        else {
+            // ... existing data delivery logic ...
+        }
+
+        // æ›´æ–°æœŸæœ›åºåˆ—å·
+        expectedSeqNum = (expectedSeqNum + 1) % MAX_SEQ_NUM;
+
+        // å‘é€ACK
+        U8 ackFrame[4] = { 0xAA, 0xBB, seqNum, 0x01 };
+        SendtoLower(ackFrame, 4, ifNo);
+    }
+    else {
+        // å‘é€NAKè¯·æ±‚é‡ä¼ 
+        U8 nakFrame[4] = { 0xAA, 0xBB, expectedSeqNum, 0x02 };
+        SendtoLower(nakFrame, 4, ifNo);
+    }
 
 }
+
 void print_statistics()
 {
-	if (printCount % 10 == 0) {
-		switch (spin) {
-		case 1:
-			printf("\r-");
-			break;
-		case 2:
-			printf("\r\\");
-			break;
-		case 3:
-			printf("\r|");
-			break;
-		case 4:
-			printf("\r/");
-			spin = 0;
-			break;
-		}
-		cout << "¹²×ª·¢ "<< iRcvForward<< " Î»£¬"<< iRcvForwardCount<<" ´Î£¬"<<"µİ½» "<< iRcvToUpper<<" Î»£¬"<< iRcvToUpperCount<<" ´Î,"<<"·¢ËÍ "<< iSndTotal <<" Î»£¬"<< iSndTotalCount<<" ´Î£¬"<< "·¢ËÍ²»³É¹¦ "<< iSndErrorCount<<" ´Î,""ÊÕµ½²»Ã÷À´Ô´ "<< iRcvUnknownCount<<" ´Î¡£";
-		spin++;
-	}
+    if (printCount % 10 == 0) {
+        switch (spin) {
+        case 1:
+            printf("\r-");
+            break;
+        case 2:
+            printf("\r\\");
+            break;
+        case 3:
+            printf("\r|");
+            break;
+        case 4:
+            printf("\r/");
+            spin = 0;
+            break;
+        }
+        cout << "å…±è½¬å‘ " << iRcvForward << " ä½ï¼Œ" << iRcvForwardCount << " æ¬¡ï¼Œ" << "é€’äº¤ " << iRcvToUpper << " ä½ï¼Œ" << iRcvToUpperCount << " æ¬¡," << "å‘é€ " << iSndTotal << " ä½ï¼Œ" << iSndTotalCount << " æ¬¡ï¼Œ" << "å‘é€ä¸æˆåŠŸ " << iSndErrorCount << " æ¬¡,""æ”¶åˆ°ä¸æ˜æ¥æº " << iRcvUnknownCount << " æ¬¡ã€‚";
+        spin++;
+    }
 
 }
-//PrintParms ´òÓ¡¹¤×÷²ÎÊı£¬×¢Òâ²»ÊÇcfgFilms¶Á³öÀ´µÄ£¬¶øÊÇÄ¿Ç°ÉúĞ§µÄ²ÎÊı
+//PrintParms æ‰“å°å·¥ä½œå‚æ•°ï¼Œæ³¨æ„ä¸æ˜¯cfgFilmsè¯»å‡ºæ¥çš„ï¼Œè€Œæ˜¯ç›®å‰ç”Ÿæ•ˆçš„å‚æ•°
 void PrintParms()
 {
-	size_t i;
-	cout << "Éè±¸ºÅ: " << strDevID << " ²ã´Î: " << strLayer << "ÊµÌå: " << strEntity << endl;
-	cout << "ÉÏ²ãÊµÌåµØÖ·: " << inet_ntoa(upper_addr.sin_addr) << "  UDP¶Ë¿ÚºÅ: " << ntohs(upper_addr.sin_port) << endl;
-	
-	cout << "±¾²ãÊµÌåµØÖ·: " << inet_ntoa(local_addr.sin_addr) << "  UDP¶Ë¿ÚºÅ: " << ntohs(local_addr.sin_port) << endl;
-	if (strLayer.compare("PHY") == 0) {
-		if (lowerNumber <= 1) {
-			cout << "ÏÂ²ãµãµ½µãĞÅµÀ" << endl;
-			cout << "Á´Â·¶Ô¶ËµØÖ·: ";
-		}
-		else {
-			cout << "ÏÂ²ã¹ã²¥Ê½ĞÅµÀ" << endl;
-			cout << "¹²ÏíĞÅµÀÕ¾µã£º";
-		}
-	}
-	else {
-		cout << "ÏÂ²ãÊµÌå";
-	}
+    size_t i;
+    cout << "è®¾å¤‡å·: " << strDevID << " å±‚æ¬¡: " << strLayer << "å®ä½“: " << strEntity << endl;
+    cout << "ä¸Šå±‚å®ä½“åœ°å€: " << inet_ntoa(upper_addr.sin_addr) << "  UDPç«¯å£å·: " << ntohs(upper_addr.sin_port) << endl;
 
-	if (strLayer.compare("PHY") == 0) {
-		cout << endl;
-		for (i = 0; i < lowerNumber; i++) {
-			cout << "        µØÖ·£º" << inet_ntoa(lower_addr[i].sin_addr) << "  UDP¶Ë¿ÚºÅ: " << ntohs(lower_addr[i].sin_port) << endl;
-		}
-	}
-	else {
-		cout << endl;
-		for (i = 0; i < lowerNumber; i++) {
-			cout << "        ½Ó¿Ú: [" << i << "] µØÖ·" << inet_ntoa(lower_addr[i].sin_addr) << "  UDP¶Ë¿ÚºÅ: " << ntohs(lower_addr[i].sin_port) << endl;
-		}
-	}
-	string strTmp;
-	//strTmp = getValueStr("cmdIpAddr");
-	cout << "Í³Ò»¹ÜÀíÆ½Ì¨µØÖ·: " << inet_ntoa(cmd_addr.sin_addr);
-	//strTmp = getValueStr("cmdPort");
-	cout << "  UDP¶Ë¿ÚºÅ: " << ntohs(cmd_addr.sin_port) << endl;
-	//strTmp = getValueStr("oneTouchAddr");
-	cout << "oneTouchÒ»¼üÆô¶¯µØÖ·: " << inet_ntoa(oneTouch_addr.sin_addr);
-	//strTmp = getValueStr("oneTouchPort");
-	cout << "  UDP¶Ë¿ÚºÅ; " << ntohs(oneTouch_addr.sin_port) << endl;
-	cout << "##################" << endl;
-	//cfgParms.printArray();
-	cout << "--------------------------------------------------------------------" << endl;
-	cout << endl;
+    cout << "æœ¬å±‚å®ä½“åœ°å€: " << inet_ntoa(local_addr.sin_addr) << "  UDPç«¯å£å·: " << ntohs(local_addr.sin_port) << endl;
+    if (strLayer.compare("PHY") == 0) {
+        if (lowerNumber <= 1) {
+            cout << "ä¸‹å±‚ç‚¹åˆ°ç‚¹ä¿¡é“" << endl;
+            cout << "é“¾è·¯å¯¹ç«¯åœ°å€: ";
+        }
+        else {
+            cout << "ä¸‹å±‚å¹¿æ’­å¼ä¿¡é“" << endl;
+            cout << "å…±äº«ä¿¡é“ç«™ç‚¹ï¼š";
+        }
+    }
+    else {
+        cout << "ä¸‹å±‚å®ä½“";
+    }
+
+    if (strLayer.compare("PHY") == 0) {
+        cout << endl;
+        for (i = 0; i < lowerNumber; i++) {
+            cout << "        åœ°å€ï¼š" << inet_ntoa(lower_addr[i].sin_addr) << "  UDPç«¯å£å·: " << ntohs(lower_addr[i].sin_port) << endl;
+        }
+    }
+    else {
+        cout << endl;
+        for (i = 0; i < lowerNumber; i++) {
+            cout << "        æ¥å£: [" << i << "] åœ°å€" << inet_ntoa(lower_addr[i].sin_addr) << "  UDPç«¯å£å·: " << ntohs(lower_addr[i].sin_port) << endl;
+        }
+    }
+    string strTmp;
+    //strTmp = getValueStr("cmdIpAddr");
+    cout << "ç»Ÿä¸€ç®¡ç†å¹³å°åœ°å€: " << inet_ntoa(cmd_addr.sin_addr);
+    //strTmp = getValueStr("cmdPort");
+    cout << "  UDPç«¯å£å·: " << ntohs(cmd_addr.sin_port) << endl;
+    //strTmp = getValueStr("oneTouchAddr");
+    cout << "oneTouchä¸€é”®å¯åŠ¨åœ°å€: " << inet_ntoa(oneTouch_addr.sin_addr);
+    //strTmp = getValueStr("oneTouchPort");
+    cout << "  UDPç«¯å£å·; " << ntohs(oneTouch_addr.sin_port) << endl;
+    cout << "##################" << endl;
+    //cfgParms.printArray();
+    cout << "--------------------------------------------------------------------" << endl;
+    cout << endl;
 
 }
 void menu()
 {
-	int selection;
-	unsigned short port;
-	int iSndRetval;
-	char kbBuf[100];
-	int len;
-	U8* bufSend;
-	//·¢ËÍ|´òÓ¡£º[·¢ËÍ¿ØÖÆ£¨0£¬µÈ´ı¼üÅÌÊäÈë£»1£¬×Ô¶¯£©][´òÓ¡¿ØÖÆ£¨0£¬½ö¶¨ÆÚ´òÓ¡Í³¼ÆĞÅÏ¢£»1£¬°´bitÁ÷´òÓ¡Êı¾İ£¬2°´×Ö½ÚÁ÷´òÓ¡Êı¾İ]
-	cout << endl << endl << "Éè±¸ºÅ:" << strDevID << ",    ²ã´Î:" << strLayer << ",    ÊµÌåºÅ:" << strEntity;
-	cout << endl << "1-Æô¶¯×Ô¶¯·¢ËÍ(ÎŞĞ§);" << endl << "2-Í£Ö¹×Ô¶¯·¢ËÍ£¨ÎŞĞ§£©; " << endl << "3-´Ó¼üÅÌÊäÈë·¢ËÍ; ";
-	cout << endl << "4-½ö´òÓ¡Í³¼ÆĞÅÏ¢; " << endl << "5-°´±ÈÌØÁ÷´òÓ¡Êı¾İÄÚÈİ;" << endl << "6-°´×Ö½ÚÁ÷´òÓ¡Êı¾İÄÚÈİ;";
-	cout << endl << "7-´òÓ¡¹¤×÷²ÎÊı±í; ";
-	cout << endl << "0-È¡Ïû" << endl << "ÇëÊäÈëÊı×ÖÑ¡ÔñÃüÁî£º";
-	cin >> selection;
-	switch (selection) {
-	case 0:
+    int selection;
+    unsigned short port;
+    int iSndRetval;
+    char kbBuf[100];
+    int len;
+    U8* bufSend;
+    //å‘é€|æ‰“å°ï¼š[å‘é€æ§åˆ¶ï¼ˆ0ï¼Œç­‰å¾…é”®ç›˜è¾“å…¥ï¼›1ï¼Œè‡ªåŠ¨ï¼‰][æ‰“å°æ§åˆ¶ï¼ˆ0ï¼Œä»…å®šæœŸæ‰“å°ç»Ÿè®¡ä¿¡æ¯ï¼›1ï¼ŒæŒ‰bitæµæ‰“å°æ•°æ®ï¼Œ2æŒ‰å­—èŠ‚æµæ‰“å°æ•°æ®]
+    cout << endl << endl << "è®¾å¤‡å·:" << strDevID << ",    å±‚æ¬¡:" << strLayer << ",    å®ä½“å·:" << strEntity;
+    cout << endl << "1-å¯åŠ¨è‡ªåŠ¨å‘é€(æ— æ•ˆ);" << endl << "2-åœæ­¢è‡ªåŠ¨å‘é€ï¼ˆæ— æ•ˆï¼‰; " << endl << "3-ä»é”®ç›˜è¾“å…¥å‘é€; ";
+    cout << endl << "4-ä»…æ‰“å°ç»Ÿè®¡ä¿¡æ¯; " << endl << "5-æŒ‰æ¯”ç‰¹æµæ‰“å°æ•°æ®å†…å®¹;" << endl << "6-æŒ‰å­—èŠ‚æµæ‰“å°æ•°æ®å†…å®¹;";
+    cout << endl << "7-æ‰“å°å·¥ä½œå‚æ•°è¡¨; ";
+    cout << endl << "0-å–æ¶ˆ" << endl << "è¯·è¾“å…¥æ•°å­—é€‰æ‹©å‘½ä»¤ï¼š";
+    cin >> selection;
+    switch (selection) {
+    case 0:
 
-		break;
-	case 1:
-		iWorkMode = 10 + iWorkMode % 10;
-		break;
-	case 2:
-		iWorkMode = iWorkMode % 10;
-		break;
-	case 3:
-		cout << "ÊäÈë×Ö·û´®(,²»³¬¹ı100×Ö·û)£º";
-		cin >> kbBuf;
-		cout << "ÊäÈëµÍ²ã½Ó¿ÚºÅ£º";
-		cin >> port;
+        break;
+    case 1:
+        iWorkMode = 10 + iWorkMode % 10;
+        break;
+    case 2:
+        iWorkMode = iWorkMode % 10;
+        break;
+    case 3:
+        cout << "è¾“å…¥å­—ç¬¦ä¸²(,ä¸è¶…è¿‡100å­—ç¬¦)ï¼š";
+        cin >> kbBuf;
+        cout << "è¾“å…¥ä½å±‚æ¥å£å·ï¼š";
+        cin >> port;
 
-		len = (int)strlen(kbBuf) + 1; //×Ö·û´®×îºóÓĞ¸ö½áÊø·û
-		if (port >= lowerNumber) {
-			cout << "Ã»ÓĞÕâ¸ö½Ó¿Ú" << endl;
-			return;
-		}
-		if (lowerMode[port] == 0) {
-			//ÏÂ²ã½Ó¿ÚÊÇ±ÈÌØÁ÷Êı×é,ĞèÒªÒ»Æ¬ĞÂµÄ»º³åÀ´×ª»»¸ñÊ½
-			bufSend = (U8*)malloc(len * 8);
+        len = (int)strlen(kbBuf) + 1; //å­—ç¬¦ä¸²æœ€åæœ‰ä¸ªç»“æŸç¬¦
+        if (port >= lowerNumber) {
+            cout << "æ²¡æœ‰è¿™ä¸ªæ¥å£" << endl;
+            return;
+        }
+        if (lowerMode[port] == 0) {
+            //ä¸‹å±‚æ¥å£æ˜¯æ¯”ç‰¹æµæ•°ç»„,éœ€è¦ä¸€ç‰‡æ–°çš„ç¼“å†²æ¥è½¬æ¢æ ¼å¼
+            bufSend = (U8*)malloc(len * 8);
 
-			iSndRetval = ByteArrayToBitArray(bufSend, len * 8, kbBuf, len);
-			iSndRetval = SendtoLower(bufSend, iSndRetval, port);
-			free(bufSend);
-		}
-		else {
-			//ÏÂ²ã½Ó¿ÚÊÇ×Ö½ÚÊı×é£¬Ö±½Ó·¢ËÍ
-			iSndRetval = SendtoLower(kbBuf, len, port);
-			iSndRetval = iSndRetval * 8; //»»Ëã³ÉÎ»
-		}
-		//·¢ËÍÍ³¼Æ
-		if (iSndRetval > 0) {
-			iSndTotalCount++;
-			iSndTotal += iSndRetval;
-		}
-		else {
-			iSndErrorCount++;
-		}
-		//¿´Òª²»Òª´òÓ¡Êı¾İ
-		cout << endl << "Ïò½Ó¿Ú " << port << " ·¢ËÍÊı¾İ£º" << endl;
-		switch (iWorkMode % 10) {
-		case 1:
-			print_data_bit(kbBuf, len, 1);
-			break;
-		case 2:
-			print_data_byte(kbBuf, len, 1);
-			break;
-		case 0:
-			break;
-		}
-		break;
-	case 4:
-		iWorkMode = (iWorkMode / 10) * 10 + 0;
-		break;
-	case 5:
-		iWorkMode = (iWorkMode / 10) * 10 + 1;
-		break;
-	case 6:
-		iWorkMode = (iWorkMode / 10) * 10 + 2;
-		break;
-	case 7:
-		PrintParms();
-		break;
-	}
+            iSndRetval = ByteArrayToBitArray(bufSend, len * 8, kbBuf, len);
+            iSndRetval = SendtoLower(bufSend, iSndRetval, port);
+            free(bufSend);
+        }
+        else {
+            //ä¸‹å±‚æ¥å£æ˜¯å­—èŠ‚æ•°ç»„ï¼Œç›´æ¥å‘é€
+            iSndRetval = SendtoLower(kbBuf, len, port);
+            iSndRetval = iSndRetval * 8; //æ¢ç®—æˆä½
+        }
+        //å‘é€ç»Ÿè®¡
+        if (iSndRetval > 0) {
+            iSndTotalCount++;
+            iSndTotal += iSndRetval;
+        }
+        else {
+            iSndErrorCount++;
+        }
+        //çœ‹è¦ä¸è¦æ‰“å°æ•°æ®
+        cout << endl << "å‘æ¥å£ " << port << " å‘é€æ•°æ®ï¼š" << endl;
+        switch (iWorkMode % 10) {
+        case 1:
+            print_data_bit(kbBuf, len, 1);
+            break;
+        case 2:
+            print_data_byte(kbBuf, len, 1);
+            break;
+        case 0:
+            break;
+        }
+        break;
+    case 4:
+        iWorkMode = (iWorkMode / 10) * 10 + 0;
+        break;
+    case 5:
+        iWorkMode = (iWorkMode / 10) * 10 + 1;
+        break;
+    case 6:
+        iWorkMode = (iWorkMode / 10) * 10 + 2;
+        break;
+    case 7:
+        PrintParms();
+        break;
+    }
 }
