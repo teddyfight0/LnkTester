@@ -1106,7 +1106,6 @@ string CCfgFileParms::getLayer()
 	return layer;
 }
 
-
 string CCfgFileParms::getEntity()
 {
 	// TODO: 在此处添加实现代码.
