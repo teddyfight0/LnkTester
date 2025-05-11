@@ -5,7 +5,6 @@
 #include "stdio.h"
 #include "CfgFileParms.h"
 #include "function.h"
-#include <stdint.h> // 添加stdint.h以定义uint8_t (U8)
 using namespace std;
 
 #define HDLC_FLAG 0x7E      // 帧定界符 
@@ -287,10 +286,14 @@ void RecvfromUpper(U8* buf, int len) {
     }
     free(dataWithCRC);
     tempBuf[frameIndex++] = HDLC_FLAG; // 结束标志
-    printf("\nHDLC帧 (%d字节):\n", frameIndex);
-    printf("\n发送HDLC帧: 长度=%d 起始标志=0x%02X 结束标志=0x%02X\n",
-        frameIndex, (unsigned char)tempBuf[0], (unsigned char)tempBuf[frameIndex - 1]);
-
+    printf("\n===== HDLC帧封装完成 =====\n");
+    printf("HDLC帧 (%d字节):\n", frameIndex);
+    for (int i = 0; i < frameIndex; i++) {
+        printf("%02X ", (unsigned char)tempBuf[i]);
+        if ((i + 1) % 16 == 0) printf("\n");
+    }
+    printf("\n");
+//-----------------------------------------------------------------------------------------
     // 发送数据
     int iSndRetval = 0;
     U8* bufSend = NULL;
@@ -381,8 +384,10 @@ void RecvfromLower(U8* buf, int len, int ifNo) {
         }
         return;
     }
-
+//------------------------------------------------------------------------------------------------------
+//     注意：以下内容全部是帧定位的部分，能够完成的工作就是进行帧定位
     // bit流转byte流
+    // 这里只是显示初始转化的结果，实际上得到的内容是不正确的！！！
     U8* byteBuf = buf;
     int byteLen = len;
     U8* tmpAlloc = nullptr;
@@ -404,24 +409,113 @@ void RecvfromLower(U8* buf, int len, int ifNo) {
         if ((i + 1) % 16 == 0) printf("\n");
     }
     printf("\n");
-    // 扫描byteBuf，查找合法的HDLC帧 
-    // 修改帧定位逻辑
+//---------------------------------------------------------------------------
+    // 1. 将byteBuf转换为比特流
+    int bitBufLen = byteLen * 8;
+    U8* bitBuf = (U8*)malloc(bitBufLen);
+    if (!bitBuf) {
+        printf("内存分配失败\n");
+        if (tmpAlloc) free(tmpAlloc);
+        return;
+    }
+    for (int i = 0; i < byteLen; i++) {
+        for (int j = 0; j < 8; j++) {
+            bitBuf[i * 8 + j] = (byteBuf[i] >> (7 - j)) & 0x1;
+        }
+    }
+
+    // 2. 在比特流中查找第一个01111110
+    int flagPattern[8] = { 0,1,1,1,1,1,1,0 };
+    int firstFlag = -1, lastFlag = -1;
+    for (int i = 0; i <= bitBufLen - 8; i++) {
+        bool match = true;
+        for (int j = 0; j < 8; j++) {
+            if (bitBuf[i + j] != flagPattern[j]) {
+                match = false;
+                break;
+            }
+        }
+        if (match) {
+            if (firstFlag == -1) firstFlag = i;
+            lastFlag = i;
+        }
+    }
+    if (firstFlag == -1 || lastFlag == -1 || lastFlag < firstFlag) {
+        printf("未找到有效的01111110标志位\n");
+        free(bitBuf);
+        if (tmpAlloc) free(tmpAlloc);
+        return;
+    }
+
+    // 3. 截取第一个到最后一个标志位之间的比特流
+    int validBitStart = firstFlag;
+    int validBitEnd = lastFlag + 8; // 包含最后一个标志位
+    int validBitLen = validBitEnd - validBitStart;
+    if (validBitLen <= 0) {
+        printf("标志位区间无效\n");
+        free(bitBuf);
+        if (tmpAlloc) free(tmpAlloc);
+        return;
+    }
+    U8* validBits = (U8*)malloc(validBitLen);
+    if (!validBits) {
+        printf("内存分配失败\n");
+        free(bitBuf);
+        if (tmpAlloc) free(tmpAlloc);
+        return;
+    }
+    memcpy(validBits, bitBuf + validBitStart, validBitLen);
+
+    // 4. 将有效比特流转换回字节流
+    int validByteLen = (validBitLen + 7) / 8;
+    U8* validBytes = (U8*)malloc(validByteLen);
+    if (!validBytes) {
+        printf("内存分配失败\n");
+        free(validBits);
+        free(bitBuf);
+        if (tmpAlloc) free(tmpAlloc);
+        return;
+    }
+    memset(validBytes, 0, validByteLen);
+    for (int i = 0; i < validBitLen; i++) {
+        validBytes[i / 8] |= (validBits[i] & 0x1) << (7 - (i % 8));
+    }
+
+    // 打印转换后的有效字节流
+    printf("提取的有效HDLC帧字节流（%d字节）:\n", validByteLen);
+    for (int i = 0; i < validByteLen; i++) {
+        printf("%02X ", validBytes[i]);
+        if ((i + 1) % 16 == 0) printf("\n");
+    }
+    printf("\n");
+
+    // 用完记得释放
+    
+    free(validBits);
+    free(bitBuf);
+
+    // 扫描validBytes，查找合法的HDLC帧 
     printf("开始在比特流中查找帧标志....\n");
     int start = -1, end = -1;
-    for (int i = 0; i < byteLen - 1; i++) {
-        if ((unsigned char)byteBuf[i] == HDLC_FLAG) {
-            for (int j = i + 1; j < byteLen; j++) {
-                if ((unsigned char)byteBuf[j] == HDLC_FLAG) {
-                    if (j - i >= 4) {
-                        start = i;
-                        end = j;
-                        printf("找到完整HDLC帧: 起始位置=%d, 结束位置=%d\n", start, end);
-                        break;
-                        U8 byte = 0;
-                    }
+    for (int i = 0; i < validByteLen; i++) {
+        if ((unsigned char)validBytes[i] == HDLC_FLAG) {
+            if (start == -1) {
+                // 找到起始标志
+                start = i;
+            }
+            else {
+                // 找到结束标志
+                end = i;
+                if (end - start >= 4) {
+                    // 找到完整帧
+                    printf("找到完整HDLC帧: 起始位置=%d, 结束位置=%d\n", start, end);
+                    break;
+                }
+                else {
+                    // 如果帧长度不足，重置起始标志
+                    start = i;
                 }
             }
-            if (start != -1) break;
         }
     }
 
@@ -434,7 +528,7 @@ void RecvfromLower(U8* buf, int len, int ifNo) {
     }
     int frameLen = end - start + 1;
     printf("\n接收到帧: 长度=%d 起始标志=0x%02X 结束标志=0x%02X\n",
-        frameLen, (unsigned char)byteBuf[start], (unsigned char)byteBuf[end]);
+        frameLen, (unsigned char)validBytes[start], (unsigned char)validBytes[end]);
 
     U8* frameBuf = (U8*)malloc(frameLen);
     if (!frameBuf) {
@@ -442,7 +536,7 @@ void RecvfromLower(U8* buf, int len, int ifNo) {
         printf("内存分配失败\n");
         return;
     }
-    memcpy(frameBuf, byteBuf + start, frameLen);
+    memcpy(frameBuf, validBytes + start, frameLen);
 
     printf("\n提取到的HDLC帧 (%d字节):\n", frameLen);
     for (int i = 0; i < frameLen; i++) {
@@ -510,10 +604,12 @@ void RecvfromLower(U8* buf, int len, int ifNo) {
             }
         }
     }
-
+    free(validBytes);
     free(tempBuf);
     free(frameBuf);
-    if (tmpAlloc) free(tmpAlloc);
+    if (tmpAlloc) {
+        free(tmpAlloc);
+    }
 }
 
 void print_statistics() {

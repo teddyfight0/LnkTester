@@ -46,14 +46,14 @@ oneTouchPort=30333
 cmdPort=20000
 phySlotTime = 20
 trafficPlotRate = 100
-errorProb = 20
+errorProb = 0
 bufferSize = 80000
 heartBeatingTime = 50
 autoSendTime = 10
 autoSendSize = 100
 workMode = 0
 upperMode = 1
-lowerMode = 1
+lowerMode = 0
 ---------------------------------------------------------
 #其它参数区域，存放实验者自行定义的各种参数，如果用例程中的cfgFileParms类，通过getValueInt和getValueStr，提供参数名，就能得到参数值
 #除了开头三行必须保持顺序：deviceID，layer,entity,其他参数行的位置可以交换，没有写出来的物理层实体参数，程序会使用默认参数
