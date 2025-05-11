@@ -32,6 +32,7 @@ void EndFunction();
 //************发送数据的函数*************
 int SendtoUpper(U8* buf, int len);
 int SendtoLower(U8* buf, int len, int ifNo);
+void SendFlagToLower(int flag, int ifNo) ;
 int SendtoCommander(U8* buf, int len);
 //************一些工具函数***************
 void print_data_bit(U8* A, int length, int iMode);

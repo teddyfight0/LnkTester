@@ -96,11 +96,38 @@ int SendtoUpper(U8* buf, int len)
 	sendlen = sendto(sock, buf, len, 0, (sockaddr*) & (upper_addr), sizeof(sockaddr_in));
 	return sendlen;
 }
+// 这里判断是否要立即重传
+//名称：SendFlagToLower
+void SendFlagToLower(int flag, int ifNo) {
+	// 如果flag不为1，不发送，直接返回
+	if (flag != 1) {
+		return;
+	}
+
+	// 验证接口号有效性
+	if (ifNo < 0 || ifNo >= lowerNumber) {
+		printf("接口号无效，无法发送标志位\n");
+		return;
+	}
+
+	// 准备发送数据（1字节标志位，值为1）
+	U8 buf[1] = { '1' };  // 使用字符'1'而不是数字1
+
+	// 发送并检查结果
+	int sendResult = sendto(sock, (const char*)buf, 1, 0, (sockaddr*)&(lower_addr[ifNo]), sizeof(sockaddr_in));
+	if (sendResult > 0) {
+		printf("已发送重传请求...\n");
+	}
+	else {
+		printf("重传请求发送失败!\n");
+	}
+}
 //***************重要函数提醒******************************
 //名称：SendtoLower
 //功能：向低层实体下发数据时，使用这个函数
 //输入：U8 * buf,准备下发的数据， int len，数据长度，单位字节,int ifNo,发往的低层接口号
 //输出：函数返回值是发送的数据量
+
 int SendtoLower(U8* buf, int len,int ifNo)
 {
 	int sendlen;
@@ -121,7 +148,7 @@ int SendtoCommander(U8* buf, int len)
 	return sendlen;
 }
 
-//------------华丽的分割线，以下是一些数据处理的工具函数，可以用，没必要改------------------------------
+//------------以下是一些数据处理的工具函数，可以用，没必要改------------------------------
 //*************************************************
 //名称：ByteArrayToBitArray
 //功能：将字节数组流放大为比特数组流
@@ -255,9 +282,9 @@ void print_data_byte(U8* A, int length, int iMode)
 	}
 	printf("\n");
 }
-//end=========重要的就这些，真正需要动手改的“只有”TimeOut，RecvFromUpper，RecvFromLower=========================
 
-//------------华丽的分割线，以下到main以前，都不用管了----------------------------
+// 一些基本的初始化操作
+
 void initTimer(int interval)
 {
 	sBasicTimer.iType = 0;
@@ -364,8 +391,7 @@ void SetColor(int ForgC)
 		SetConsoleTextAttribute(hStdOut, wColor);
 	}
 }
-//------------华丽的分割线，根据布局计算显示位置-----------------
-//布局因子，以左上角位坐标原点
+// 初始化界面的布局
 #define MAX_LAYOUTS	9 //最大支持9个节点的布局
 struct Layout_t {
 	float xRate;
@@ -679,7 +705,7 @@ void oneTouch(char* buf, int len)
 	}
 }
 
-//------------华丽的分割线，main来了-----------------
+// main函数，整个LNK层的大脑
 int main(int argc, char* argv[])
 {
 	U8 * buf;          //存放从高层、低层、各方面来的数据的缓存，大小为MAX_BUFFER_SIZE
@@ -701,27 +727,14 @@ int main(int argc, char* argv[])
 		cout << "内存不够" << endl;
 		return 0;
 	}
+	//从键盘读取，初始化设备内容
+	cout << "请输入设备号：";
+	cin >> s1;
+	cout << "请输入层次名（大写）：";
+	cin >> s2;
+	cout << "请输入实体号：";
+	cin >> s3;
 
-	if (argc == 4) {
-		s1 = argv[1];
-		s2 = argv[2];
-		s3 = argv[3];
-	}
-	else if (argc == 3) {
-		s1 = argv[1];
-		s2 = "LNK";
-		s3 = argv[2];
-	}
-	else {
-		//从键盘读取
-		cout << "请输入设备号：";
-		cin >> s1;
-		cout << "请输入层次名（大写）：";
-		cin >> s2;
-		//s2 = "NET";
-		cout << "请输入实体号：";
-		cin >> s3;
-	}
 	WSAStartup(0x101, &wsa);
 	sock = socket(AF_INET, SOCK_DGRAM, 0);
 	if (sock == SOCKET_ERROR)
@@ -748,32 +761,20 @@ int main(int argc, char* argv[])
 
 	if (!cfgParms.isConfigExist) {
 		//从键盘输入上、下层本层的地址和端口号等等
-		//偷个懒，要求必须填好配置文件
 		return 0;
 	}
 	
-	//取本层实体参数，并设置——已废弃，采用隐式绑定
-	//local_addr = cfgParms.getUDPAddr(CCfgFileParms::LOCAL,0);
-	//local_addr.sin_addr.S_un.S_addr = htonl(INADDR_ANY);
-	//if (bind(sock, (sockaddr*)& local_addr, sizeof(sockaddr_in)) != 0) {
-		//printf("参数错误\n");
-		//return 0;
 
-	//}
 	//获取工作参数
 	retval = cfgParms.getValueInt(iWorkMode, (char*)"workMode");
 	if (retval == -1) {
 		iWorkMode = 0;
 	}
 
-	//读上层实体参数，已废弃，改为初始化
-	//upper_addr = cfgParms.getUDPAddr(CCfgFileParms::UPPER, 0);
 	upper_addr.sin_family = AF_INET;
 	upper_addr.sin_addr.S_un.S_addr = 0;
 	upper_addr.sin_port = 0;
 
-	//取下层实体参数，并设置，已废弃，保留底层数量和底层工作参数
-	//先取数量
 	lowerNumber = cfgParms.getUDPAddrNumber(CCfgFileParms::LOWER);
 	if (0 > lowerNumber) {
 		printf("参数错误\n");
@@ -781,12 +782,9 @@ int main(int argc, char* argv[])
 	}
 	//逐个读取
 	for (i = 0; i < lowerNumber; i++) {
-		//已废弃，改为初始化
-		//lower_addr[i] = cfgParms.getUDPAddr(CCfgFileParms::LOWER, i);
 		lower_addr[i].sin_family = AF_INET;
 		lower_addr[i].sin_addr.S_un.S_addr = 0;
 		lower_addr[i].sin_port = 0;
-
 		//读取低层接口数据形式，先组装lowerModex参数名，到局部参数中找
 		strTmp = "lowerMode";
 		strTmp += std::to_string(i);
@@ -850,8 +848,7 @@ int main(int argc, char* argv[])
 		}
 		setSelectTimeOut(&timeout, &sBasicTimer);
 		retval = select(0, &readfds, NULL, NULL, &timeout);
-		if (true == isTimeOut(&sBasicTimer)) {
-
+		if (isTimeOut(&sBasicTimer)) {
 			TimeOut();
 			HelloTimeout();
 			continue;
@@ -879,12 +876,19 @@ int main(int argc, char* argv[])
 		//收到数据后,通过源头判断是上层、下层、统一管理平台还是oneTouch的命令
 		//if (remote_addr.sin_port == upper_addr.sin_port) {
 		if(isSameEndPoint(remote_addr,upper_addr)){
+			// 这里我不希望直接修改内存收到的数据，这样是极其不安全的操作（在RecvfromUpper已经完全实现了）
+			// 这里参考的方式应该是把这份数据进行复制，然后校验，如果发生错误就要求进行重传
+			// 否则不能传给上层数据
+			// Pack 函数进行封装
+			// Unpack 函数进行解封装（内置在RecvfromUpper和RecvfromLower函数里面实现了上述功能）
+			// SendFlagToLower 函数来确定是否进行重传（这里使用的是CRC校验方法）
+			// 这里添加一个单元测试，来验证是否能够成功实现重传，发送的情况如下
+		
 			RecvfromUpper(buf, retval);
 		}
 		else {
 			for (iRecvIntfNo = 0; iRecvIntfNo < lowerNumber; iRecvIntfNo++) {
 				//下层收到的数据,检查是哪个接口的
-				//if (remote_addr.sin_port == lower_addr[iRecvIntfNo].sin_port) {
 				if(isSameEndPoint(remote_addr, lower_addr[iRecvIntfNo])){
 					RecvfromLower(buf, retval, iRecvIntfNo);
 					break;
@@ -892,13 +896,10 @@ int main(int argc, char* argv[])
 			}
 			if (iRecvIntfNo >= lowerNumber) {
 				//检查是不是控制口命令
-				//if (remote_addr.sin_port == cmd_addr.sin_port) {
 					if (strncmp(buf, "exit", 4) == 0) { 
 						//收到退出命令
 						goto ret;
 					}
-				//}
-				//else {
 					//从其他临时性端口来的命令
 					if (strncmp(buf, "selected", 8) == 0) {
 						//收到要求突出显示的命令
@@ -916,7 +917,6 @@ int main(int argc, char* argv[])
 						//收到oneTouch的通告 
 						oneTouch(buf, retval);
 					}
-				//}
 			}
 		}
 	}
@@ -931,15 +931,3 @@ ret:
 	}
 	return 0;
 }
-
-
-// 运行程序: Ctrl + F5 或调试 >“开始执行(不调试)”菜单
-// 调试程序: F5 或调试 >“开始调试”菜单
-
-// 入门使用技巧: 
-//   1. 使用解决方案资源管理器窗口添加/管理文件
-//   2. 使用团队资源管理器窗口连接到源代码管理
-//   3. 使用输出窗口查看生成输出和其他消息
-//   4. 使用错误列表窗口查看错误
-//   5. 转到“项目”>“添加新项”以创建新的代码文件，或转到“项目”>“添加现有项”以将现有代码文件添加到项目
-//   6. 将来，若要再次打开此项目，请转到“文件”>“打开”>“项目”并选择 .sln 文件
