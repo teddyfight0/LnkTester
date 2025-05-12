@@ -7,6 +7,7 @@
 #include "function.h"
 using namespace std;
 
+
 #define HDLC_FLAG 0x7E      // 帧定界符 
 #define HDLC_ESC 0x7D       // 转义字符
 #define HDLC_ESC_MASK 0x20  // 转义掩码
@@ -23,6 +24,39 @@ typedef struct {
     bool isError;
     const char* description;
 } TestCase;
+
+// 定义MAC地址
+struct MAC_Address {
+    U8 device_id;  // 设备号作为第一个字节
+    U8 entity_id;  // 实体号作为第二个字节
+};
+
+extern MAC_Address dest_mac;
+
+// 地址表项结构
+struct AddressTableEntry {
+    MAC_Address mac;        // MAC地址
+    int port;              // 对应的端口号
+    int cost;             // 链路代价(用于Prim算法)
+    bool isActive;         // 是否在最小生成树中
+};
+
+// 全局地址表
+std::vector<AddressTableEntry> addressTable;
+
+// 广播MAC地址定义
+const MAC_Address BROADCAST_MAC = { 0xFF, 0xFF };
+
+// 全局MAC地址变量
+MAC_Address local_mac;  // 本地MAC地址
+MAC_Address dest_mac;   // 目的MAC地址
+#define MAC_ADDR_SIZE 2 // MAC地址长度(字节)
+
+// 邻接矩阵用于Prim算法
+#define MAX_NODES 256  // 最大节点数(基于MAC地址范围)
+int adjMatrix[MAX_NODES][MAX_NODES];
+bool mstMatrix[MAX_NODES][MAX_NODES];  // 最小生成树矩阵
+int nodeCount = 0;    // 当前节点数量
 
 // 以下为重要的变量
 bool receivedSuccess = false;
@@ -44,12 +78,156 @@ int iRcvToUpperCount = 0;  // 从低层递交高层数据总次数
 int iRcvUnknownCount = 0;  // 收到不明来源数据总次数
 #define MAX_RETRIES 3  // 最大重传次数
 int retryCount = 0;    // 当前重传次数
+
+// 全局变量：源 MAC 地址和目的 MAC 地址
+
+
 // 打印统计信息
 void print_statistics();
 void menu();
 
-// 这里是自动测试的函数
+// 初始化邻接矩阵
+void InitMatrix() {
+    memset(adjMatrix, 0x3f, sizeof(adjMatrix)); // 初始化为无穷大
+    memset(mstMatrix, 0, sizeof(mstMatrix));
+    for (int i = 0; i < MAX_NODES; i++) {
+        adjMatrix[i][i] = 0;
+    }
+}
+// 使用Prim算法构建最小生成树
+void BuildMST() {
+    if (nodeCount == 0) return;
 
+    std::vector<bool> visited(nodeCount, false);
+    std::vector<int> minCost(nodeCount, INT_MAX);
+    std::vector<int> parent(nodeCount, -1);
+
+    // 从第一个节点开始
+    minCost[0] = 0;
+
+    for (int i = 0; i < nodeCount; i++) {
+        int minVertex = -1;
+        int minValue = INT_MAX;
+
+        // 找到未访问的最小代价节点
+        for (int j = 0; j < nodeCount; j++) {
+            if (!visited[j] && minCost[j] < minValue) {
+                minValue = minCost[j];
+                minVertex = j;
+            }
+        }
+
+        if (minVertex == -1) break;
+
+        visited[minVertex] = true;
+
+        // 更新相邻节点的代价
+        for (int j = 0; j < nodeCount; j++) {
+            if (!visited[j] && adjMatrix[minVertex][j] < minCost[j]) {
+                minCost[j] = adjMatrix[minVertex][j];
+                parent[j] = minVertex;
+            }
+        }
+    }
+
+    // 构建最小生成树矩阵
+    memset(mstMatrix, 0, sizeof(mstMatrix));
+    for (int i = 1; i < nodeCount; i++) {
+        if (parent[i] != -1) {
+            mstMatrix[parent[i]][i] = true;
+            mstMatrix[i][parent[i]] = true;
+        }
+    }
+}
+
+// 在地址表中查找MAC地址
+int FindMACInTable(const MAC_Address& mac) {
+    for (size_t i = 0; i < addressTable.size(); i++) {
+        if (addressTable[i].mac.device_id == mac.device_id &&
+            addressTable[i].mac.entity_id == mac.entity_id) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+// 添加或更新地址表项
+void UpdateAddressTable(const MAC_Address& mac, int port, int cost = 1) {
+    // 不将广播地址加入地址表
+    if (mac.device_id == 0xFF && mac.entity_id == 0xFF) {
+        return;
+    }
+
+    // 如果是本地地址且端口未知(-1)，设置为本地端口(0)
+    if (mac.device_id == local_mac.device_id &&
+        mac.entity_id == local_mac.entity_id &&
+        port == -1) {
+        port = 0;  // 修正自己发给自己时的端口号
+    }
+
+    int index = FindMACInTable(mac);
+    if (index == -1) {
+        // 新增表项
+        AddressTableEntry entry = { mac, port, cost, false };
+        addressTable.push_back(entry);
+
+        if (nodeCount < MAX_NODES - 1) {
+            // 为新节点添加连接
+            for (int i = 0; i < nodeCount; i++) {
+                adjMatrix[i][nodeCount] = cost;
+                adjMatrix[nodeCount][i] = cost;
+            }
+            adjMatrix[nodeCount][nodeCount] = 0;
+            nodeCount++;
+            BuildMST();
+
+            printf("\n新增地址表项 - 设备:%02X 实体:%02X 端口:%d\n",
+                mac.device_id, mac.entity_id, port);
+        }
+    }
+    else {
+        // 如果是已知地址，但端口未知，则更新端口信息(反向地址学习)
+        if (addressTable[index].port == -1 && port != -1) {
+            addressTable[index].port = port;
+            addressTable[index].cost = cost;
+
+            printf("\n更新地址表项(反向学习) - 设备:%02X 实体:%02X 端口:%d\n",
+                mac.device_id, mac.entity_id, port);
+        }
+        // 其他情况下更新已有表项
+        else if (addressTable[index].port != port || addressTable[index].cost != cost) {
+            addressTable[index].port = port;
+            addressTable[index].cost = cost;
+
+            // 更新邻接矩阵中的代价
+            for (int i = 0; i < nodeCount; i++) {
+                if (i != index) {
+                    adjMatrix[i][index] = cost;
+                    adjMatrix[index][i] = cost;
+                }
+            }
+            BuildMST();
+
+            printf("\n更新地址表项 - 设备:%02X 实体:%02X 端口:%d\n",
+                mac.device_id, mac.entity_id, port);
+        }
+    }
+}
+
+//---------------------------------------------------------------------------
+//---------------------------------------------------------------------------
+void InitMAC() {
+    // 从设备号和实体号初始化本地MAC
+    local_mac.device_id = (U8)atoi(strDevID.c_str());
+    local_mac.entity_id = (U8)atoi(strEntity.c_str());
+}
+
+// 检查MAC地址是否匹配
+bool CheckMACMatch(const MAC_Address* received_mac) {
+    return (received_mac->device_id == local_mac.device_id &&
+        received_mac->entity_id == local_mac.entity_id);
+}
+// 这里是自动测试的函数
 void AutoTestHDLC() {
     static TestCase testCases[] = {
         {NULL, 0, false, "Test1-Normal"},      // 正常发送
@@ -163,6 +341,15 @@ void InitFunction(CCfgFileParms& cfgParms) {
         cout << "内存不够" << endl;
         exit(0);
     }
+    // 初始化MAC地址
+    InitMAC();
+
+    // 初始化邻接矩阵和最小生成树
+    InitMatrix();
+
+    // 清空地址表
+    addressTable.clear();
+
     return;
 }
 
@@ -262,6 +449,47 @@ void RecvfromUpper(U8* buf, int len) {
     int frameIndex = 0;
     tempBuf[frameIndex++] = HDLC_FLAG;  // 起始标志
 
+    // 查找目的MAC地址
+    if (dest_mac.device_id == 0xFFFFFFFF && dest_mac.entity_id == 0xFFFFFFFF) {
+        // 广播包
+        tempBuf[frameIndex++] = 0xFF;   // 广播目的MAC地址
+        tempBuf[frameIndex++] = 0xFF;
+        printf("帧类型: %s\n", (dest_mac.device_id == 0xFFFFFFFF && dest_mac.entity_id == 0xFFFFFFFF) ?
+            "广播" : "单播");
+
+    }
+    else {
+        // 单播包 - 直接使用设置的目的MAC地址
+        tempBuf[frameIndex++] = dest_mac.device_id;
+        tempBuf[frameIndex++] = dest_mac.entity_id;
+
+        // 打印目的地址信息用于调试
+        printf("正在发送单播数据包到 %02X:%02X\n",
+            dest_mac.device_id, dest_mac.entity_id);
+        printf("\n目的MAC地址: %02X:%02X\n", dest_mac.device_id, dest_mac.entity_id);
+        printf("帧类型: %s\n", (dest_mac.device_id == 0xFFFFFFFF && dest_mac.entity_id == 0xFFFFFFFF) ?
+            "广播" : "单播");
+
+    }
+    // 添加本地MAC地址到地址表(在发送数据时)
+    UpdateAddressTable(local_mac, 0);
+
+    // 如果是单播且不是广播，添加目的MAC到地址表
+    if (dest_mac.device_id != 0xFFFFFFFF || dest_mac.entity_id != 0xFFFFFFFF) {
+        // 如果目的地址是本地地址，使用本地端口0
+        if (dest_mac.device_id == local_mac.device_id &&
+            dest_mac.entity_id == local_mac.entity_id) {
+            UpdateAddressTable(dest_mac, 0);
+        }
+        else {
+            UpdateAddressTable(dest_mac, -1); // 其他情况使用-1表示未知端口
+        }
+    }
+
+    // 添加源MAC地址
+    tempBuf[frameIndex++] = local_mac.device_id;
+    tempBuf[frameIndex++] = local_mac.entity_id;
+
     // 计算CRC
     uint16_t fcs = calculateCRC16(buf, len);
     U8* dataWithCRC = (U8*)malloc(len + CRC_SIZE);
@@ -312,7 +540,7 @@ void RecvfromUpper(U8* buf, int len) {
         iSndRetval = iSndRetval * 8;
     }
 
-    free(tempBuf);
+    
     if (bufSend != NULL) {
         if (buflast != NULL) free(buflast);
         buflast = (U8*)malloc(iSndRetval);
@@ -338,7 +566,7 @@ void RecvfromUpper(U8* buf, int len) {
             buflast_len = frameIndex;
         }
     }
-
+    free(tempBuf);
     switch (iWorkMode % 10) {
     case 1:
         cout << endl << "高层要求向接口 " << 0 << " 发送数据：" << endl;
@@ -526,9 +754,55 @@ void RecvfromLower(U8* buf, int len, int ifNo) {
         if (tmpAlloc) free(tmpAlloc);
         return;
     }
+
+    // 解析MAC地址
+    MAC_Address received_dest_mac, received_src_mac;
+    received_dest_mac.device_id = validBytes[start + 1];
+    received_dest_mac.entity_id = validBytes[start + 2];
+    received_src_mac.device_id = validBytes[start + 3];
+    received_src_mac.entity_id = validBytes[start + 4];
+
+    // 更新地址表
+    UpdateAddressTable(received_src_mac, ifNo);
+
+    // 检查MAC地址是否匹配
+    bool isForMe = (received_dest_mac.device_id == 0xFF && received_dest_mac.entity_id == 0xFF) ||
+        CheckMACMatch(&received_dest_mac);
+
+    if (!isForMe) {
+        // 如果不是发给我的包,查找最小生成树决定是否转发
+        int srcIndex = FindMACInTable(received_src_mac);
+        int destIndex = FindMACInTable(received_dest_mac);
+
+        if (srcIndex != -1 && destIndex != -1 && mstMatrix[srcIndex][destIndex]) {
+            // 在最小生成树上,需要转发
+            for (int i = 0; i < lowerNumber; i++) {
+                if (i != ifNo) { // 不从收到的端口转发
+                    SendtoLower(validBytes, validByteLen, i);
+                    iRcvForward += validByteLen * 8;
+                    iRcvForwardCount++;
+                }
+            }
+        }
+
+        free(validBytes);
+        if (tmpAlloc) free(tmpAlloc);
+        return;
+    }
+    
+
+    // 存储源MAC地址用于回复
+    dest_mac = received_src_mac;
+
+    printf("MAC地址匹配!\n");
+    printf("源MAC: %02X:%02X\n", received_src_mac.device_id, received_src_mac.entity_id);
+    printf("目的MAC: %02X:%02X\n", received_dest_mac.device_id, received_dest_mac.entity_id);
+
     int frameLen = end - start + 1;
     printf("\n接收到帧: 长度=%d 起始标志=0x%02X 结束标志=0x%02X\n",
         frameLen, (unsigned char)validBytes[start], (unsigned char)validBytes[end]);
+//-------------------------------------------------------
+// 以上的部分是帧解析完成的所有内容
 
     U8* frameBuf = (U8*)malloc(frameLen);
     if (!frameBuf) {
@@ -612,6 +886,57 @@ void RecvfromLower(U8* buf, int len, int ifNo) {
     }
 }
 
+//打印最小生成树和当前的地址表
+void printTree() {
+    printf("\n============= 当前网络状态 =============\n");
+
+    // 打印当前的地址表
+    printf("\n=== 地址表 ===\n");
+    printf("索引\t设备:实体\t端口\t代价\t状态\n");
+    printf("----------------------------------------\n");
+    for (size_t i = 0; i < addressTable.size(); i++) {
+        printf("%zu\t%02X:%02X\t\t%d\t%d\t%s\n",
+            i,
+            addressTable[i].mac.device_id,
+            addressTable[i].mac.entity_id,
+            addressTable[i].port,
+            addressTable[i].cost,
+            addressTable[i].isActive ? "活动" : "非活动");
+    }
+
+    // 打印邻接矩阵
+    printf("\n=== 邻接矩阵 ===\n");
+    printf("    ");
+    for (int i = 0; i < nodeCount; i++) {
+        printf("%2d ", i);
+    }
+    printf("\n");
+    for (int i = 0; i < nodeCount; i++) {
+        printf("%2d: ", i);
+        for (int j = 0; j < nodeCount; j++) {
+            if (adjMatrix[i][j] >= 0x3f3f3f3f)
+                printf("∞ ");
+            else
+                printf("%2d ", adjMatrix[i][j]);
+        }
+        printf("\n");
+    }
+
+    // 打印最小生成树
+    printf("\n=== 最小生成树 ===\n");
+    for (int i = 0; i < nodeCount; i++) {
+        for (int j = i + 1; j < nodeCount; j++) {
+            if (mstMatrix[i][j]) {
+                printf("节点%d <--> 节点%d\n", i, j);
+            }
+        }
+    }
+
+    printf("\n======================================\n");
+}
+
+
+//打印相关的统计信息
 void print_statistics() {
     if (printCount % 10 == 0) {
         switch (spin) {
@@ -681,6 +1006,7 @@ void PrintParms() {
     cout << endl;
 }
 
+// 菜单函数
 void menu() {
     int selection;
     unsigned short port;
@@ -693,6 +1019,8 @@ void menu() {
     cout << endl << "7-打印工作参数表; ";
     cout << endl << "0-取消" << endl << "请输入数字选择命令：";
     cout << endl << "8-启动HDLC自动测试;";  // 新增选项
+    cout << endl << "9-设置目的MAC地址;";
+
     cin >> selection;
     switch (selection) {
     case 0:
@@ -717,6 +1045,53 @@ void menu() {
         cout << "测试将包含正常发送和错误重传的情况" << endl;
         isAutoTest = true;
         testDataCount = 0;
+        break;
+        // 在menu()函数中添加新的case:
+    case 9:
+        cout << "设置目的MAC地址:" << endl;
+        cout << "输入目的设备号(0-255,输入255为广播): ";
+        int device_id;
+        cin >> device_id;
+        if (device_id == 255) {
+            dest_mac.device_id = 0xFF;
+            dest_mac.entity_id = 0xFF;
+            cout << "已设置为广播地址 FF:FF" << endl;
+        }
+        else {
+            dest_mac.device_id = (U8)device_id;
+            cout << "输入目的实体号(0-255,输入255为广播): ";
+            int entity_id;
+            cin >> entity_id;
+            if (entity_id == 255) {
+                dest_mac.entity_id = 0xFF;
+                if (dest_mac.device_id == 0xFF) {
+                    cout << "已设置为广播地址 FF:FF" << endl;
+                }
+                else {
+                    cout << "已设置目的MAC为 " << hex << (int)dest_mac.device_id << ":FF" << dec << endl;
+                }
+            }
+            else {
+                dest_mac.entity_id = (U8)entity_id;
+                cout << "已设置目的MAC为 " << hex << (int)dest_mac.device_id << ":" << (int)dest_mac.entity_id << dec << endl;
+            }
+        }
+        // 生成测试数据
+        const char* testMessage = "Hello from device ";
+        string message = testMessage + strDevID;
+        int dataLen = message.length() + 1;
+        U8* testData = (U8*)malloc(dataLen);
+        if (!testData) {
+            cout << "内存分配失败!" << endl;
+            break;
+        }
+        memcpy(testData, message.c_str(), dataLen);
+
+        // 发送数据
+        RecvfromUpper(testData, dataLen);
+        free(testData);
+        // 打印当前地址表和最小生成树
+        printTree();
         break;
     }
 }
