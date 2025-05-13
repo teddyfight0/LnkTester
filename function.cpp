@@ -5,8 +5,18 @@
 #include "stdio.h"
 #include "CfgFileParms.h"
 #include "function.h"
+#include <set>
+#include <string>
 using namespace std;
 
+// 记录已处理的探索帧,避免重复转发
+std::set<string> processedFrames;
+// 定期清理processedFrames,避免占用过多内存
+void cleanProcessedFrames() {
+    if (processedFrames.size() > 1000) { // 可配置的阈值
+        processedFrames.clear();
+    }
+}
 
 #define HDLC_FLAG 0x7E      // 帧定界符 
 #define HDLC_ESC 0x7D       // 转义字符
@@ -397,6 +407,7 @@ void TimeOut() {
                 waitForConfirm = 0;
             }
             AutoTestHDLC();
+            cleanProcessedFrames(); // 定期清理已处理帧记录
             testTimeout = 0;
         }
     }
@@ -587,23 +598,62 @@ void RecvfromUpper(U8* buf, int len) {
     }
     else {
         // 单播包：使用最小生成树确定转发端口
-		printf("发送单播包到端口 %d\n", targetPort);
+        printf("【调试】准备发送单播包，目标MAC=%02X:%02X\n", dest_mac.device_id, dest_mac.entity_id);
+        printf("发送单播包到端口 %d\n", targetPort);
         int destIndex = FindMACInTable(dest_mac);
+        printf("【调试】FindMACInTable(dest_mac) 返回: %d\n", destIndex);
+
         if (destIndex != -1) {
             // 在地址表中找到目标MAC
             targetPort = addressTable[destIndex].port;
-            if (targetPort == -1) {
-                // 端口未知，需要遍历最小生成树找到合适的转发端口
-                int localIndex = FindMACInTable(local_mac);
-                if (localIndex != -1) {
-                    for (int i = 0; i < lowerNumber; i++) {
-                        if (mstMatrix[localIndex][destIndex]) {
-                            targetPort = i;
-                            break;
-                        }
+            printf("【调试】目标MAC在地址表中的端口: %d\n", targetPort);
+        }
+
+        // 如果没找到目标MAC或端口未知,进行广播探索
+        if (destIndex == -1 || targetPort == -1) {
+            printf("【调试】目标端口未知,启动广播探索...\n");
+            // 将当前帧标记为探索帧(可以在帧中添加一个标志位)
+            tempBuf[frameIndex++] = 0x01; // 添加探索标志
+
+            // 广播发送
+            for (int i = 0; i < lowerNumber; i++) {
+                printf("正在向端口 %d 发送探索帧... ", i);
+                if (lowerMode[i] == 0) {
+                    // 比特流模式
+                    bufSend = (U8*)malloc(frameIndex * 8);
+                    if (bufSend == NULL) {
+                        printf("内存分配失败!\n");
+                        iSndErrorCount++;
+                        continue;
+                    }
+                    int bitLen = ByteArrayToBitArray(bufSend, frameIndex * 8, tempBuf, frameIndex);
+                    int ret = SendtoLower(bufSend, bitLen, i);
+                    if (ret > 0) {
+                        printf("发送成功\n");
+                        iSndTotal += ret;
+                        iSndTotalCount++;
+                    }
+                    else {
+                        printf("发送失败!\n");
+                        iSndErrorCount++;
+                    }
+                    free(bufSend);
+                }
+                else {
+                    // 字节流模式  
+                    int ret = SendtoLower(tempBuf, frameIndex, i);
+                    if (ret > 0) {
+                        printf("发送成功\n");
+                        iSndTotal += ret * 8;
+                        iSndTotalCount++;
+                    }
+                    else {
+                        printf("发送失败!\n");
+                        iSndErrorCount++;
                     }
                 }
             }
+            return; // 探索过程中先不保存重传缓存
         }
 
         if (targetPort >= 0 && targetPort < lowerNumber) {
@@ -843,6 +893,9 @@ void RecvfromLower(U8* buf, int len, int ifNo) {
     received_dest_mac.entity_id = validBytes[start + 2];
     received_src_mac.device_id = validBytes[start + 3];
     received_src_mac.entity_id = validBytes[start + 4];
+    // 在MAC地址解析后添加:
+    bool isExploreFrame = (validBytes[start + 5] == 0x01); // 检查是否是探索帧
+
 
     // 更新地址表
     UpdateAddressTable(received_src_mac, ifNo);
@@ -850,18 +903,54 @@ void RecvfromLower(U8* buf, int len, int ifNo) {
     // 检查MAC地址是否匹配
     bool isForMe = (received_dest_mac.device_id == 0xFF && received_dest_mac.entity_id == 0xFF) ||
         CheckMACMatch(&received_dest_mac);
+    printf("\n数据包类型检查:");
+    printf("\n- 目的MAC: %02X:%02X", received_dest_mac.device_id, received_dest_mac.entity_id);
+    printf("\n- 是否广播: %s", (received_dest_mac.device_id == 0xFFFFFFFF && received_dest_mac.entity_id == 0xFFFFFFFF) ? "是" : "否");
+    printf("\n- 是否本机: %s", CheckMACMatch(&received_dest_mac) ? "是" : "否");
+    printf("\n- 需要处理: %s\n", isForMe ? "是" : "否");
+
 
     // in RecvfromLower() function
     if (!isForMe) {
         // 如果不是发给我的包，需要判断是否需要转发
+        printf("目的地址：%02X\n", received_dest_mac.device_id);  // 修正：使用%02X打印十六进制
+        printf("目的实体：%02X\n", received_dest_mac.entity_id);
+        if (isExploreFrame) {
+            // 使用哈希表或其他数据结构记录已处理过的探索帧,避免重复转发
+            string frameId = to_string(received_src_mac.device_id) +
+                to_string(received_src_mac.entity_id) +
+                to_string(received_dest_mac.device_id) +
+                to_string(received_dest_mac.entity_id);
+
+            if (!processedFrames.count(frameId)) {
+                processedFrames.insert(frameId);
+                printf("收到探索帧,继续广播转发\n");
+
+                // 广播转发到其他端口
+                for (int i = 0; i < lowerNumber; i++) {
+                    if (i != ifNo) {
+                        printf("转发探索帧到端口 %d\n", i);
+                        SendtoLower(validBytes, validByteLen, i);
+                    }
+                }
+            }
+        }
         if (received_dest_mac.device_id == 0xFFFFFFFF && received_dest_mac.entity_id == 0xFFFFFFFF) {
             // 广播包：转发到除了接收端口外的所有端口
             printf("转发广播包到所有其他端口\n");
             for (int i = 0; i < lowerNumber; i++) {
                 if (i != ifNo) { // 不从收到的端口转发出去
-                    SendtoLower(validBytes, validByteLen, i);
-                    iRcvForward += validByteLen * 8;
-                    iRcvForwardCount++;
+                    printf("  正在转发到端口 %d... ", i);
+                   int rat = SendtoLower(validBytes, validByteLen, i);
+				   if (rat > 0) {
+					   printf("发送成功，大小: %d\n", rat);
+					   iRcvForward += rat * 8;
+					   iRcvForwardCount++;
+				   }
+				   else {
+					   printf("发送失败!\n");
+                       iSndErrorCount++;
+				   } 
                 }
             }
         }
@@ -896,6 +985,16 @@ void RecvfromLower(U8* buf, int len, int ifNo) {
         free(validBytes);
         if (tmpAlloc) free(tmpAlloc);
         return;
+    }
+    else {
+        // 是发给本机的包
+        if (isExploreFrame) {
+            printf("收到对本机的探索帧,发送应答\n");
+            // 构造应答帧并发回源地址
+            // 可以利用dest_mac(已设为源MAC)发送应答
+            // ... 发送应答帧的代码 ...
+        }
+        // ... 原有的处理逻辑 ...
     }
 
     
