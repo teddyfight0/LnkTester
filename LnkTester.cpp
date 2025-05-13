@@ -793,7 +793,7 @@ int main(int argc, char* argv[])
 			//没找到局部专设的参数，则再找全局值
 			retval = cfgParms.getValueInt(lowerMode[i], (char*)"lowerMode");
 			if (0 > retval) {
-				lowerMode[i] = 1; //默认都是字节流
+				lowerMode[i] = 0; //默认都是字节流
 			}
 		}
 	}

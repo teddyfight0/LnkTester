@@ -13,6 +13,7 @@ using namespace std;
 #define HDLC_ESC_MASK 0x20  // 转义掩码
 #define MAX_FRAME_SIZE 500  // 最大帧长度
 #define CRC_SIZE 2          // CRC校验码长度
+extern int lowerNumber;  //底层实体数量
 
 static const uint16_t crc16_table[256] = {
     0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50A5, 0x60C6, 0x70E7,
@@ -154,7 +155,7 @@ int FindMACInTable(const MAC_Address& mac) {
 // 添加或更新地址表项
 void UpdateAddressTable(const MAC_Address& mac, int port, int cost = 1) {
     // 不将广播地址加入地址表
-    if (mac.device_id == 0xFF && mac.entity_id == 0xFF) {
+    if (mac.device_id == 0xFFFFFFFF && mac.entity_id == 0xFFFFFFFF) {
         return;
     }
 
@@ -523,62 +524,143 @@ void RecvfromUpper(U8* buf, int len) {
     printf("\n");
 //-----------------------------------------------------------------------------------------
     // 发送数据
+    // 发送数据
     int iSndRetval = 0;
     U8* bufSend = NULL;
 
-    if (lowerMode[0] == 0) {
-        bufSend = (U8*)malloc(frameIndex * 8);
-        if (bufSend == NULL) {
-            free(tempBuf);
-            return;
+    // 确定发送端口
+    int targetPort = -1;
+    if (dest_mac.device_id == 0xFFFFFFFF && dest_mac.entity_id == 0xFFFFFFFF) {
+        // 广播包：需要发送到所有端口
+        printf("\n发送广播包到所有端口\n");
+		printf("%d\n", lowerNumber);
+        bool sendSuccess = true;
+        for (int i = 0; i < lowerNumber; i++) {
+            printf("正在发送到端口 %d... ", i);  // 添加调试输出
+			printf("lowerMode[%d]: %d\n", i, lowerMode[i]);
+            if (lowerMode[i] == 0) {
+                // 比特流模式
+                bufSend = (U8*)malloc(frameIndex * 8);
+                if (bufSend == NULL) {
+                    printf("内存分配失败!\n");
+                    iSndErrorCount++;
+                    continue;
+                }
+                int bitLen = ByteArrayToBitArray(bufSend, frameIndex * 8, tempBuf, frameIndex);
+                int ret = SendtoLower(bufSend, bitLen, i);
+                if (ret > 0) {
+                    printf("发送成功，大小: %d\n", ret);
+                    iSndTotal += ret;
+                    iSndTotalCount++;
+                }
+                else {
+                    printf("发送失败!\n");
+                    sendSuccess = false;
+                    iSndErrorCount++;
+                }
+                free(bufSend);
+                bufSend = NULL;
+            }
+            else {
+                // 字节流模式
+                int ret = SendtoLower(tempBuf, frameIndex, i);
+                if (ret > 0) {
+                    iSndTotal += ret * 8;
+                    iSndTotalCount++;
+                }
+                else {
+                    sendSuccess = false;
+                    iSndErrorCount++;
+                }
+            }
         }
-        int bitLen = ByteArrayToBitArray(bufSend, frameIndex * 8, tempBuf, frameIndex);
-        iSndRetval = SendtoLower(bufSend, bitLen, 0); // 这里用bitLen
+
+        // 保存最后发送的数据用于重传
+        if (sendSuccess && buflast != NULL) {
+            free(buflast);
+            buflast = (U8*)malloc(frameIndex);
+            if (buflast != NULL) {
+                memcpy(buflast, tempBuf, frameIndex);
+                buflast_len = frameIndex;
+            }
+        }
     }
     else {
-        iSndRetval = SendtoLower(tempBuf, frameIndex, 0);
-        iSndRetval = iSndRetval * 8;
+        // 单播包：使用最小生成树确定转发端口
+		printf("发送单播包到端口 %d\n", targetPort);
+        int destIndex = FindMACInTable(dest_mac);
+        if (destIndex != -1) {
+            // 在地址表中找到目标MAC
+            targetPort = addressTable[destIndex].port;
+            if (targetPort == -1) {
+                // 端口未知，需要遍历最小生成树找到合适的转发端口
+                int localIndex = FindMACInTable(local_mac);
+                if (localIndex != -1) {
+                    for (int i = 0; i < lowerNumber; i++) {
+                        if (mstMatrix[localIndex][destIndex]) {
+                            targetPort = i;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (targetPort >= 0 && targetPort < lowerNumber) {
+            printf("\n发送单播包到端口 %d\n", targetPort);
+            if (lowerMode[targetPort] == 0) {
+                // 比特流模式
+                bufSend = (U8*)malloc(frameIndex * 8);
+                if (bufSend == NULL) {
+                    iSndErrorCount++;
+                    free(tempBuf);
+                    return;
+                }
+                int bitLen = ByteArrayToBitArray(bufSend, frameIndex * 8, tempBuf, frameIndex);
+                iSndRetval = SendtoLower(bufSend, bitLen, targetPort);
+                if (iSndRetval > 0) {
+                    iSndTotal += iSndRetval;
+                    iSndTotalCount++;
+                    // 保存用于重传
+                    if (buflast != NULL) free(buflast);
+                    buflast = (U8*)malloc(iSndRetval);
+                    if (buflast != NULL) {
+                        memcpy(buflast, bufSend, iSndRetval);
+                        buflast_len = iSndRetval;
+                    }
+                }
+                else {
+                    iSndErrorCount++;
+                }
+                free(bufSend);
+            }
+            else {
+                // 字节流模式
+                iSndRetval = SendtoLower(tempBuf, frameIndex, targetPort);
+                if (iSndRetval > 0) {
+                    iSndTotal += iSndRetval * 8;
+                    iSndTotalCount++;
+                    // 保存用于重传
+                    if (buflast != NULL) free(buflast);
+                    buflast = (U8*)malloc(frameIndex);
+                    if (buflast != NULL) {
+                        memcpy(buflast, tempBuf, frameIndex);
+                        buflast_len = frameIndex;
+                    }
+                }
+                else {
+                    iSndErrorCount++;
+                }
+            }
+        }
+        else {
+            printf("\n错误：找不到有效的发送端口，目标MAC=%02X:%02X\n",
+                dest_mac.device_id, dest_mac.entity_id);
+            iSndErrorCount++;
+        }
     }
 
-    
-    if (bufSend != NULL) {
-        if (buflast != NULL) free(buflast);
-        buflast = (U8*)malloc(iSndRetval);
-        if (buflast != NULL) {
-            memcpy(buflast, bufSend, iSndRetval);
-            buflast_len = iSndRetval;
-        }
-        free(bufSend);
-    }
-
-    if (iSndRetval <= 0) {
-        iSndErrorCount++;
-    }
-    else {
-        iSndTotal += iSndRetval;
-        iSndTotalCount++;
-    }
-    if (iSndRetval > 0) {
-        if (buflast != NULL) free(buflast);
-        buflast = (U8*)malloc(frameIndex);
-        if (buflast != NULL) {
-            memcpy(buflast, tempBuf, frameIndex);
-            buflast_len = frameIndex;
-        }
-    }
     free(tempBuf);
-    switch (iWorkMode % 10) {
-    case 1:
-        cout << endl << "高层要求向接口 " << 0 << " 发送数据：" << endl;
-        print_data_bit(buf, len, 1);
-        break;
-    case 2:
-        cout << endl << "高层要求向接口 " << 0 << " 发送数据：" << endl;
-        print_data_byte(buf, len, 1);
-        break;
-    case 0:
-        break;
-    }
 }
 
 
@@ -769,18 +851,44 @@ void RecvfromLower(U8* buf, int len, int ifNo) {
     bool isForMe = (received_dest_mac.device_id == 0xFF && received_dest_mac.entity_id == 0xFF) ||
         CheckMACMatch(&received_dest_mac);
 
+    // in RecvfromLower() function
     if (!isForMe) {
-        // 如果不是发给我的包,查找最小生成树决定是否转发
-        int srcIndex = FindMACInTable(received_src_mac);
-        int destIndex = FindMACInTable(received_dest_mac);
-
-        if (srcIndex != -1 && destIndex != -1 && mstMatrix[srcIndex][destIndex]) {
-            // 在最小生成树上,需要转发
+        // 如果不是发给我的包，需要判断是否需要转发
+        if (received_dest_mac.device_id == 0xFFFFFFFF && received_dest_mac.entity_id == 0xFFFFFFFF) {
+            // 广播包：转发到除了接收端口外的所有端口
+            printf("转发广播包到所有其他端口\n");
             for (int i = 0; i < lowerNumber; i++) {
-                if (i != ifNo) { // 不从收到的端口转发
+                if (i != ifNo) { // 不从收到的端口转发出去
                     SendtoLower(validBytes, validByteLen, i);
                     iRcvForward += validByteLen * 8;
                     iRcvForwardCount++;
+                }
+            }
+        }
+        else {
+            // 单播包：查找最小生成树确定转发路径
+            int srcIndex = FindMACInTable(received_src_mac);
+            int destIndex = FindMACInTable(received_dest_mac);
+
+            if (srcIndex != -1 && destIndex != -1) {
+                // 检查是否在最小生成树路径上
+                if (mstMatrix[srcIndex][destIndex]) {
+                    // 找到目的MAC对应的转发端口
+                    int forwardPort = -1;
+                    for (size_t i = 0; i < addressTable.size(); i++) {
+                        if (addressTable[i].mac.device_id == received_dest_mac.device_id &&
+                            addressTable[i].mac.entity_id == received_dest_mac.entity_id) {
+                            forwardPort = addressTable[i].port;
+                            break;
+                        }
+                    }
+
+                    if (forwardPort >= 0 && forwardPort < lowerNumber && forwardPort != ifNo) {
+                        printf("通过最小生成树转发单播包到端口 %d\n", forwardPort);
+                        SendtoLower(validBytes, validByteLen, forwardPort);
+                        iRcvForward += validByteLen * 8;
+                        iRcvForwardCount++;
+                    }
                 }
             }
         }
@@ -789,6 +897,7 @@ void RecvfromLower(U8* buf, int len, int ifNo) {
         if (tmpAlloc) free(tmpAlloc);
         return;
     }
+
     
 
     // 存储源MAC地址用于回复
